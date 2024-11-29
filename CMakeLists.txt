@@ -58,6 +58,7 @@ if(BUILD_TESTING)
   add_executable(hmm)
   target_sources(hmm PRIVATE
     src/coro.cpp
+    src/logging-stuff.hpp
   )
   target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
