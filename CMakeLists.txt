@@ -57,7 +57,7 @@ install(
 if(BUILD_TESTING)
   add_executable(hmm)
   target_sources(hmm PRIVATE
-    coro.cpp
+    src/coro.cpp
   )
   target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
