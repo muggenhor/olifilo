@@ -424,7 +424,7 @@ class io_poll_context
       i = 0;
       for (const auto& [fd, handler] : _polled_events)
       {
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, static_cast<const void*>(handler), handler->event, handler->fd, handler->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler->waiter.address());
+        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, static_cast<const void*>(handler), handler->events, handler->fd, handler->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler->waiter.address());
 
         if (handler->timeout)
         {
@@ -438,17 +438,17 @@ class io_poll_context
           continue;
 
         assert(fd < FD_SETSIZE);
-        if (std::to_underlying(handler->event & io::poll_event::read))
+        if (std::to_underlying(handler->events & io::poll_event::read))
         {
           FD_SET(fd, &readfds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
         }
-        if (std::to_underlying(handler->event & io::poll_event::write))
+        if (std::to_underlying(handler->events & io::poll_event::write))
         {
           FD_SET(fd, &writefds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
         }
-        if (std::to_underlying(handler->event & io::poll_event::priority))
+        if (std::to_underlying(handler->events & io::poll_event::priority))
         {
           FD_SET(fd, &exceptfds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
@@ -500,7 +500,7 @@ class io_poll_context
             if (!handler.timeout || now < *handler.timeout)
               continue;
 
-            ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.event, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
+            ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
             handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
             _to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
             _polled_events.erase(i);
@@ -511,12 +511,12 @@ class io_poll_context
           if (!fd)
             continue;
 
-          if (!(std::to_underlying(handler.event & io::poll_event::read    ) && FD_ISSET(fd, &readfds))
-           && !(std::to_underlying(handler.event & io::poll_event::write   ) && FD_ISSET(fd, &writefds))
-           && !(std::to_underlying(handler.event & io::poll_event::priority) && FD_ISSET(fd, &exceptfds)))
+          if (!(std::to_underlying(handler.events & io::poll_event::read    ) && FD_ISSET(fd, &readfds))
+           && !(std::to_underlying(handler.events & io::poll_event::write   ) && FD_ISSET(fd, &writefds))
+           && !(std::to_underlying(handler.events & io::poll_event::priority) && FD_ISSET(fd, &exceptfds)))
             continue;
 
-          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.event, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
+          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
           handler.wait_result.emplace(); // no polling error (may be an error event but that's for checking downstream)
           _to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
           _polled_events.erase(i);
@@ -626,7 +626,7 @@ class future
         ////const auto now = std::decay_t<decltype(*promise.waits_on_me.events.front()->timeout)>::clock::now();
         for (const auto event : promise.waits_on_me.events)
         {
-          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{},{}](root={}, events@{}, event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, j++, handle.address(), static_cast<const void*>(&promise.waits_on_me.events), static_cast<const void*>(event), event->event, event->fd, event->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), event->waiter.address());
+          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{},{}](root={}, events@{}, event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, j++, handle.address(), static_cast<const void*>(&promise.waits_on_me.events), static_cast<const void*>(event), event->events, event->fd, event->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), event->waiter.address());
           executor.wait_for(*event);
         }
         promise.waits_on_me.events.clear();
@@ -925,7 +925,7 @@ future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
 
     for (const auto& event : child->events)
     {
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, waiter={}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(*reinterpret_cast<std::decay_t<decltype(my_promise)>*>(child)).address(), static_cast<const void*>(event), event->event, event->fd, event->waiter.address());
+      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, waiter={}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(*reinterpret_cast<std::decay_t<decltype(my_promise)>*>(child)).address(), static_cast<const void*>(event), event->events, event->fd, event->waiter.address());
     }
 
     // Steal all events from all child futures
@@ -945,7 +945,7 @@ future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
   std::size_t i = 0;
   for (const auto& event : events_queue)
   {
-    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, events@{}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i++, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), static_cast<const void*>(&events_queue), static_cast<const void*>(event), event->event, event->fd, event->waiter.address());
+    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, events@{}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i++, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), static_cast<const void*>(&events_queue), static_cast<const void*>(event), event->events, event->fd, event->waiter.address());
   }
 
   // Allow future.get() to handle the actual I/O multiplexing
