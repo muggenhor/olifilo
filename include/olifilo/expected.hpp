@@ -7,6 +7,7 @@
 #include <memory>
 #include <system_error>
 #include <type_traits>
+#include <utility>
 #include <version>
 
 #if __cpp_lib_expected >= 202202L
@@ -41,6 +42,44 @@ struct is_expected_with_std_error_code<std::expected<T, std::error_code>> : std:
 template <typename T>
 inline constexpr bool is_expected_with_std_error_code_v = is_expected_with_std_error_code<T>::value;
 
+struct unexpect_t
+{
+  unexpect_t() = default;
+
+#if __cpp_lib_expected >= 202202L
+  explicit(false) constexpr unexpect_t(std::unexpect_t) noexcept;
+  explicit(false) constexpr operator std::unexpect_t() const noexcept { return std::unexpect; }
+#endif
+};
+
+template <typename T>
+struct unexpected
+{
+  T _value;
+
+  template <typename Self>
+  constexpr decltype(auto) error(this Self&& self) noexcept
+  {
+    return std::forward_like<Self>(self._value);
+  }
+
+#if __cpp_lib_expected >= 202202L
+  template <typename Self, typename U>
+  explicit(!std::is_convertible_v<decltype(std::forward_like<Self>(std::declval<T>())), U>)
+  constexpr operator std::unexpected<U>(this Self&& self)
+    noexcept(std::is_nothrow_constructible_v<U, decltype(std::forward_like<Self>(std::declval<T>()))>)
+    requires(std::is_constructible_v<U, decltype(std::forward_like<Self>(std::declval<T>()))>)
+  {
+    return std::unexpected<T>(std::in_place, std::forward_like<Self>(self._value));
+  }
+#endif
+};
+
+static_assert(std::is_convertible_v<unexpected<int>, std::unexpected<int>>);
+static_assert(std::is_constructible_v<std::unexpected<int>, unexpected<int>>);
+
+inline constexpr unexpect_t unexpect;
+
 namespace detail
 {
 template <typename T>
@@ -61,7 +100,7 @@ struct expected_storage
   {
   }
 
-  constexpr expected_storage(std::unexpect_t, int code, const std::error_category& category) noexcept
+  constexpr expected_storage(unexpect_t, int code, const std::error_category& category) noexcept
     : _error(code)
     , _error_cat(&category)
   {
@@ -190,7 +229,7 @@ struct expected_storage<void>
 
   constexpr expected_storage() noexcept = default;
 
-  constexpr expected_storage(std::unexpect_t, int code, const std::error_category& category) noexcept
+  constexpr expected_storage(unexpect_t, int code, const std::error_category& category) noexcept
     : _error(code)
     , _error_cat(&category)
   {
@@ -238,25 +277,25 @@ class expected
         std::construct_at(&_storage._value);
     }
 
-    constexpr expected(std::unexpect_t unexpect, int code, const std::error_category& category) noexcept
+    constexpr expected(unexpect_t unexpect, int code, const std::error_category& category) noexcept
       : _storage(unexpect, code, category)
     {
     }
 
-    constexpr expected(std::unexpect_t unexpect, std::error_code error) noexcept
+    constexpr expected(unexpect_t unexpect, std::error_code error) noexcept
       : _storage(unexpect, error.value(), error.category())
     {
     }
 
-    constexpr expected(std::unexpected<std::error_code> error) noexcept
-      : expected(std::unexpect, error.error())
+    constexpr expected(unexpected<std::error_code> error) noexcept
+      : expected(unexpect, error.error())
     {
     }
 
     constexpr expected(std::error_code error) noexcept
       requires(!std::is_constructible_v<T, std::error_code&>
             && !std::is_constructible_v<T, std::error_code&&>)
-      : _storage(std::unexpect, error.value(), error.category())
+      : _storage(unexpect, error.value(), error.category())
     {
     }
 
@@ -358,7 +397,7 @@ class expected
       using result_t = std::expected<T, std::error_code>;
 
       if (!self)
-        return result_t(std::unexpect, self.error());
+        return result_t(unexpect, self.error());
 
       if constexpr (std::is_same_v<T, void>)
         return result_t();
@@ -425,7 +464,7 @@ class expected
       ;
 
       if (!*this)
-        return result_t(std::unexpect, this->error());
+        return result_t(unexpect, this->error());
 
       return result_t(std::invoke(f));
     }
@@ -439,7 +478,7 @@ class expected
       >;
 
       if (!*this)
-        return result_t(std::unexpect, this->error());
+        return result_t(unexpect, this->error());
 
       return result_t(std::invoke(f));
     }
@@ -458,7 +497,7 @@ class expected
       ;
 
       if (!self)
-        return result_t(std::unexpect, self.error());
+        return result_t(unexpect, self.error());
 
       return result_t(std::invoke(f, *std::forward<Self>(self)));
     }
@@ -472,7 +511,7 @@ class expected
       >;
 
       if (!self)
-        return result_t(std::unexpect, self.error());
+        return result_t(unexpect, self.error());
 
       return result_t(std::invoke(f, *std::forward<Self>(self)));
     }

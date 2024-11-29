@@ -427,9 +427,9 @@ expected<typename detail::socket_opt<optname>::return_type> getsockopt(file_desc
   typename opt::type optval;
   if (auto rv = getsockopt(fd, opt::level, opt::name, as_writable_bytes(std::span(&optval, 1)));
       !rv)
-    return std::unexpected(rv.error());
+    return unexpected(rv.error());
   else if (rv->size() != sizeof(optval))
-    return std::unexpected(std::make_error_code(std::errc::invalid_argument));
+    return unexpected(std::make_error_code(std::errc::invalid_argument));
 
   if constexpr (std::is_same_v<typename opt::type, typename opt::return_type>)
     return optval;
@@ -637,7 +637,7 @@ class io_poll_context
 
       for (auto& [_, event] : _polled_events)
       {
-        event->wait_result = std::unexpected(std::make_error_code(std::errc::operation_canceled));
+        event->wait_result = unexpected(std::make_error_code(std::errc::operation_canceled));
         // Don't know if this is necessary. But hopefully better than leaving them dangling or calling destroy()?
         _to_resume.emplace_back(event->waiter);
       }
@@ -654,14 +654,14 @@ class io_poll_context
       if (event.fd < 0 && event.fd >= FD_SETSIZE && !event.timeout)
       {
         // Because we're using select() which has a very limited range of acceptable file descriptors (usually [0:1024))
-        event.wait_result = std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
+        event.wait_result = unexpected(std::make_error_code(std::errc::bad_file_descriptor));
         _to_resume.emplace_back(event.waiter);
         return;
       }
 
       if (event.timeout && *event.timeout < std::decay_t<decltype(*event.timeout)>::clock::now())
       {
-        event.wait_result = std::unexpected(std::make_error_code(std::errc::timed_out));
+        event.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
         _to_resume.emplace_back(event.waiter);
         return;
       }
@@ -774,7 +774,7 @@ class io_poll_context
               continue;
 
             ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.event, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
-            handler.wait_result = std::unexpected(std::make_error_code(std::errc::timed_out));
+            handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
             _to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
             _polled_events.erase(i);
 
@@ -905,7 +905,7 @@ class future
         promise.waits_on_me.events.clear();
 
         if (auto err = executor.run_one(); err)
-          return std::unexpected(err);
+          return unexpected(err);
       }
 
       assert(promise.returned_value);
