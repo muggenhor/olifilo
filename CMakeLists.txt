@@ -7,12 +7,21 @@ project(olifilo
   VERSION "0.0.1"
 )
 
+add_compile_options(
+  -fdiagnostics-color=always
+  #-fsanitize=undefined,address
+)
+add_link_options(
+  -fdiagnostics-color=always
+  #-fsanitize=undefined,address
+)
+
 include(CTest)
 
 add_library(${PROJECT_NAME} INTERFACE)
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_20)
+target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
 
 set_target_properties(
   ${PROJECT_NAME}
@@ -53,14 +62,4 @@ if(BUILD_TESTING)
   target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
   target_compile_features(hmm PRIVATE cxx_std_23)
-  target_compile_options(hmm
-    PRIVATE
-      -fdiagnostics-color=always
-      #-fsanitize=undefined,address
-  )
-  target_link_options(hmm
-    PRIVATE
-      -fdiagnostics-color=always
-      #-fsanitize=undefined,address
-  )
 endif()
