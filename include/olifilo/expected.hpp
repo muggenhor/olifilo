@@ -13,7 +13,7 @@
 #  include <expected>
 #endif
 
-namespace coroline
+namespace olifilo
 {
 template <typename T>
 class expected;

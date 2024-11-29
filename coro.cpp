@@ -73,7 +73,7 @@ static inline auto ts() noexcept
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
 
-namespace coroline
+namespace olifilo
 {
 namespace io
 {
@@ -130,15 +130,15 @@ std::error_condition make_error_condition(error e)
   return {static_cast<int>(e), error_category()};
 }
 }  // namespace io
-}  // namespace coroline
+}  // namespace olifilo
 
 namespace std
 {
   template <>
-  struct is_error_condition_enum<coroline::io::error> : true_type {};
+  struct is_error_condition_enum<olifilo::io::error> : true_type {};
 }  // namespace std
 
-namespace coroline
+namespace olifilo
 {
 using file_descriptor_handle = int;
 inline constexpr file_descriptor_handle invalid_file_descriptor_handle = -1;
@@ -178,10 +178,10 @@ poll_event operator~(poll_event e) noexcept
   return static_cast<poll_event>(~std::to_underlying(e));
 }
 }  // namespace io
-}  // namespace coroline
+}  // namespace olifilo
 
 template <>
-struct std::formatter<coroline::io::poll_event, char>
+struct std::formatter<olifilo::io::poll_event, char>
 {
   template <typename ParseContext>
   constexpr auto parse(ParseContext&& ctx)
@@ -195,10 +195,10 @@ struct std::formatter<coroline::io::poll_event, char>
   }
 
   template <typename FmtContext>
-  auto format(coroline::io::poll_event event, FmtContext&& ctx) const
+  auto format(olifilo::io::poll_event event, FmtContext&& ctx) const
   {
     using namespace std::literals::string_view_literals;
-    using coroline::io::poll_event;
+    using olifilo::io::poll_event;
 
     auto out = ctx.out();
     if (!std::to_underlying(event))
@@ -225,7 +225,7 @@ struct std::formatter<coroline::io::poll_event, char>
   }
 };
 
-namespace coroline
+namespace olifilo
 {
 namespace io
 {
@@ -1420,7 +1420,7 @@ class stream_socket : public socket_descriptor
 
   private:
 };
-}  // namespace coroline
+}  // namespace olifilo
 
 class mqtt
 {
@@ -1460,7 +1460,7 @@ class mqtt
 
     std::chrono::duration<std::uint16_t> keep_alive{15};
 
-    static coroline::future<mqtt> connect(const char* ipv6, uint16_t port, std::uint8_t id) noexcept
+    static olifilo::future<mqtt> connect(const char* ipv6, uint16_t port, std::uint8_t id) noexcept
     {
       mqtt con;
       {
@@ -1474,7 +1474,7 @@ class mqtt
         else if (r == 0)
           co_return std::make_error_code(std::errc::invalid_argument);
 
-        if (auto r = coroline::stream_socket::create(addr.sin6_family))
+        if (auto r = olifilo::stream_socket::create(addr.sin6_family))
           con._sock = std::move(*r);
         else
           co_return r.error();
@@ -1532,7 +1532,7 @@ class mqtt
       std::memset(connect_pkt, 0, sizeof(connect_pkt));
 
 #if 1
-      if (auto r = co_await coroline::io_poll(con._sock.handle(), coroline::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io_poll(con._sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r.error();
 #endif
 
@@ -1559,7 +1559,7 @@ class mqtt
       co_return con;
     }
 
-    coroline::future<void> disconnect() noexcept
+    olifilo::future<void> disconnect() noexcept
     {
       char disconnect_pkt[2];
       disconnect_pkt[0] = std::to_underlying(packet_t::disconnect) << 4;
@@ -1570,11 +1570,11 @@ class mqtt
           !r)
         co_return r;
 
-      if (auto r = this->_sock.shutdown(coroline::io::shutdown_how::write); !r)
+      if (auto r = this->_sock.shutdown(olifilo::io::shutdown_how::write); !r)
         co_return r;
 
 #if 1
-      if (auto r = co_await coroline::io_poll(this->_sock.handle(), coroline::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io_poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r;
 #endif
 
@@ -1588,7 +1588,7 @@ class mqtt
       co_return {};
     }
 
-    coroline::future<void> ping() noexcept
+    olifilo::future<void> ping() noexcept
     {
       char ping_pkt[2];
       ping_pkt[0] = std::to_underlying(packet_t::pingreq) << 4;
@@ -1600,7 +1600,7 @@ class mqtt
         co_return r;
 
 #if 1
-      if (auto r = co_await coroline::io_poll(this->_sock.handle(), coroline::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io_poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r;
 #endif
 
@@ -1621,10 +1621,10 @@ class mqtt
     }
 
   private:
-    coroline::stream_socket _sock;
+    olifilo::stream_socket _sock;
 };
 
-coroline::future<void> do_mqtt(std::uint8_t id) noexcept
+olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
 {
   using namespace std::literals::chrono_literals;
 
@@ -1635,7 +1635,7 @@ coroline::future<void> do_mqtt(std::uint8_t id) noexcept
   if (!r)
     co_return r;
 
-  using clock = coroline::io_poll::timeout_clock;
+  using clock = olifilo::io_poll::timeout_clock;
   const auto keep_alive_wait_time = std::chrono::duration_cast<clock::duration>(r->keep_alive) * 3 / 4;
   const auto start = clock::now() - ts();
   constexpr auto run_time = 120s;
@@ -1644,7 +1644,7 @@ coroline::future<void> do_mqtt(std::uint8_t id) noexcept
   while ((now = clock::now()) - start < run_time)
   {
     const auto sleep_time = keep_alive_wait_time - (now - start) % keep_alive_wait_time;
-    auto err = co_await coroline::sleep_until(now + sleep_time);
+    auto err = co_await olifilo::sleep_until(now + sleep_time);
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({}) err = {}\n", ts(), __LINE__, "do_mqtt", id, (err ? std::error_code() : err.error()).message());
     if (!err)
       co_return err;
@@ -1674,7 +1674,7 @@ int main()
       !r1 || !r2)
     throw std::system_error(!r1 ? r1.error() : r2.error());
 #else
-  auto rs = coroline::when_all(std::array{do_mqtt(3), do_mqtt(4)}).get();
+  auto rs = olifilo::when_all(std::array{do_mqtt(3), do_mqtt(4)}).get();
   if (!rs)
     throw std::system_error(rs.error());
   for (auto& ri : *rs)
