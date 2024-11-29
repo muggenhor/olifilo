@@ -101,10 +101,10 @@ expected<void> fcntl_set_file_status_flags(file_descriptor_handle fd, int flags)
 
 expected<file_descriptor_handle> socket(int domain, int type, int protocol = 0) noexcept
 {
-  if (auto rv = ::socket(domain, type, protocol); rv == -1)
+  if (file_descriptor_handle rv(::socket(domain, type, protocol)); !rv)
     return std::error_code(errno, std::system_category());
   else
-    return static_cast<io::file_descriptor_handle>(rv);
+    return rv;
 }
 
 expected<void> connect(file_descriptor_handle fd, const struct ::sockaddr* addr, ::socklen_t addrlen) noexcept
@@ -317,13 +317,16 @@ class file_descriptor
 
     void close() noexcept
     {
-      if (_fd != -1)
-        ::close(std::exchange(_fd, -1));
+      if (_fd)
+      {
+        ::close(_fd);
+        _fd = nullptr;
+      }
     }
 
     constexpr explicit operator bool() const noexcept
     {
-      return _fd != -1;
+      return static_cast<bool>(_fd);
     }
 
     constexpr io::file_descriptor_handle handle() const noexcept
@@ -333,7 +336,7 @@ class file_descriptor
 
     constexpr io::file_descriptor_handle release() noexcept
     {
-      return std::exchange(_fd, -1);
+      return std::exchange(_fd, nullptr);
     }
 
     future<std::span<std::byte>> read_some(std::span<std::byte> buf) noexcept;
@@ -343,7 +346,7 @@ class file_descriptor
     future<void> write(std::span<const std::byte> buf) noexcept;
 
   private:
-    io::file_descriptor_handle _fd = -1;
+    io::file_descriptor_handle _fd;
 };
 
 // used to register coroutines waiting for events and wait for all those events
@@ -431,7 +434,7 @@ class io_poll_context
             timeout = *handler->timeout;
         }
 
-        if (fd == io::invalid_file_descriptor_handle)
+        if (!fd)
           continue;
 
         assert(fd < FD_SETSIZE);
@@ -505,7 +508,7 @@ class io_poll_context
             continue;
           }
 
-          if (fd == io::invalid_file_descriptor_handle)
+          if (!fd)
             continue;
 
           if (!(std::to_underlying(handler.event & io::poll_event::read    ) && FD_ISSET(fd, &readfds))

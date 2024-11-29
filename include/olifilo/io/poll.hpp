@@ -47,7 +47,7 @@ class poll
     constexpr awaitable operator co_await() noexcept;
 
   private:
-    file_descriptor_handle _fd = invalid_file_descriptor_handle;
+    file_descriptor_handle _fd;
     io::poll_event _events = static_cast<io::poll_event>(0);
     std::optional<timeout_clock::time_point> _timeout;
 };
@@ -61,7 +61,7 @@ namespace olifilo::io
 {
 struct poll::awaitable
 {
-  file_descriptor_handle fd = invalid_file_descriptor_handle;
+  file_descriptor_handle fd;
   io::poll_event event;
   std::optional<timeout_clock::time_point> timeout;
   expected<void> wait_result;
