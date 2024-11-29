@@ -2,6 +2,8 @@
 
 #include <olifilo/expected.hpp>
 #include <olifilo/io/errors.hpp>
+#include <olifilo/io/poll.hpp>
+#include <olifilo/io/types.hpp>
 
 #include "logging-stuff.hpp"
 
@@ -39,93 +41,7 @@ struct overloaded : Ts... { using Ts::operator()...; };
 
 namespace olifilo
 {
-using file_descriptor_handle = int;
-inline constexpr file_descriptor_handle invalid_file_descriptor_handle = -1;
-
 // expected<T, std::error_code> wrappers for I/O syscalls
-namespace io
-{
-enum class poll_event : std::uint32_t
-{
-  read     =  0x1,
-  priority =  0x2,
-  write    =  0x4,
-};
-
-poll_event operator|(poll_event lhs, poll_event rhs) noexcept
-{
-  return static_cast<poll_event>(std::to_underlying(lhs) | std::to_underlying(rhs));
-}
-
-poll_event& operator|=(poll_event& lhs, poll_event rhs) noexcept
-{
-  return lhs = (lhs | rhs);
-}
-
-poll_event operator&(poll_event lhs, poll_event rhs) noexcept
-{
-  return static_cast<poll_event>(std::to_underlying(lhs) & std::to_underlying(rhs));
-}
-
-poll_event& operator&=(poll_event& lhs, poll_event rhs) noexcept
-{
-  return lhs = (lhs & rhs);
-}
-
-poll_event operator~(poll_event e) noexcept
-{
-  return static_cast<poll_event>(~std::to_underlying(e));
-}
-}  // namespace io
-}  // namespace olifilo
-
-template <>
-struct std::formatter<olifilo::io::poll_event, char>
-{
-  template <typename ParseContext>
-  constexpr auto parse(ParseContext&& ctx)
-  {
-    auto it = ctx.begin();
-
-    if (it != ctx.end() && *it != '}')
-      throw std::format_error("invalid format args for 'poll_event'");
-
-    return it;
-  }
-
-  template <typename FmtContext>
-  auto format(olifilo::io::poll_event event, FmtContext&& ctx) const
-  {
-    using namespace std::literals::string_view_literals;
-    using olifilo::io::poll_event;
-
-    auto out = ctx.out();
-    if (!std::to_underlying(event))
-      return *out++ = '0';
-    bool first = true;
-    if (std::to_underlying(event & poll_event::read))
-    {
-      first = false;
-      out = std::ranges::copy("read"sv, out).out;
-    }
-    if (std::to_underlying(event & poll_event::write))
-    {
-      if (!std::exchange(first, false))
-        *out++ = '|';
-      out = std::ranges::copy("write"sv, out).out;
-    }
-    if (std::to_underlying(event & poll_event::priority))
-    {
-      if (!std::exchange(first, false))
-        *out++ = '|';
-      out = std::ranges::copy("priority"sv, out).out;
-    }
-    return out;
-  }
-};
-
-namespace olifilo
-{
 namespace io
 {
 expected<std::size_t> read(file_descriptor_handle fd, std::span<std::byte> buf) noexcept
@@ -188,7 +104,7 @@ expected<file_descriptor_handle> socket(int domain, int type, int protocol = 0) 
   if (auto rv = ::socket(domain, type, protocol); rv == -1)
     return std::error_code(errno, std::system_category());
   else
-    return static_cast<file_descriptor_handle>(rv);
+    return static_cast<io::file_descriptor_handle>(rv);
 }
 
 expected<void> connect(file_descriptor_handle fd, const struct ::sockaddr* addr, ::socklen_t addrlen) noexcept
@@ -374,7 +290,7 @@ class file_descriptor
   public:
     file_descriptor() = default;
 
-    constexpr file_descriptor(file_descriptor_handle fd)
+    constexpr file_descriptor(io::file_descriptor_handle fd)
       : _fd(fd)
     {
     }
@@ -410,12 +326,12 @@ class file_descriptor
       return _fd != -1;
     }
 
-    constexpr file_descriptor_handle handle() const noexcept
+    constexpr io::file_descriptor_handle handle() const noexcept
     {
       return _fd;
     }
 
-    constexpr file_descriptor_handle release() noexcept
+    constexpr io::file_descriptor_handle release() noexcept
     {
       return std::exchange(_fd, -1);
     }
@@ -427,98 +343,7 @@ class file_descriptor
     future<void> write(std::span<const std::byte> buf) noexcept;
 
   private:
-    file_descriptor_handle _fd = -1;
-};
-
-class io_poll
-{
-  public:
-    using timeout_clock = std::chrono::steady_clock;
-
-    explicit constexpr io_poll(file_descriptor_handle fd, io::poll_event events) noexcept
-      : _fd(fd)
-      , _events(events)
-    {
-    }
-
-    explicit constexpr io_poll(file_descriptor_handle fd, io::poll_event events, timeout_clock::time_point timeout) noexcept
-      : _fd(fd)
-      , _events(events)
-      , _timeout(timeout)
-    {
-    }
-
-    explicit constexpr io_poll(file_descriptor_handle fd, io::poll_event events, timeout_clock::duration timeout) noexcept
-      : io_poll(fd, events, timeout_clock::now() + timeout)
-    {
-    }
-
-    explicit constexpr io_poll(timeout_clock::time_point timeout) noexcept
-      : _timeout(timeout)
-    {
-    }
-
-    explicit constexpr io_poll(timeout_clock::duration timeout) noexcept
-      : io_poll(timeout_clock::now() + timeout)
-    {
-    }
-
-    struct awaitable
-    {
-      file_descriptor_handle fd = invalid_file_descriptor_handle;
-      io::poll_event event;
-      std::optional<timeout_clock::time_point> timeout;
-      expected<void> wait_result;
-      std::coroutine_handle<> waiter;
-      std::deque<awaitable*>* waits_on = nullptr;
-
-      awaitable() = default;
-
-      explicit constexpr awaitable(const io_poll& event) noexcept
-        : fd(event._fd)
-        , event(event._events)
-        , timeout(event._timeout)
-      {
-      }
-
-      explicit constexpr awaitable(const io_poll& event, std::deque<awaitable*>& waits_on) noexcept
-        : fd(event._fd)
-        , event(event._events)
-        , timeout(event._timeout)
-        , waits_on(&waits_on)
-      {
-      }
-
-      constexpr bool await_ready() const noexcept
-      {
-        return false;
-      }
-
-      constexpr auto await_resume() const noexcept
-      {
-        return std::move(wait_result);
-      }
-
-      void await_suspend(std::coroutine_handle<> suspended)
-      {
-        waiter = suspended;
-
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(events@{}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "io_poll::awaitable::await_suspend", static_cast<const void*>(waits_on), static_cast<const void*>(this), this->event, this->fd, this->waiter.address());
-
-        if (waits_on)
-          waits_on->push_back(this);
-      }
-    };
-
-    constexpr awaitable operator co_await() noexcept
-    {
-      return awaitable(*this);
-    }
-
-  private:
-    file_descriptor_handle _fd = invalid_file_descriptor_handle;
-    io::poll_event _events = static_cast<io::poll_event>(0);
-    std::optional<timeout_clock::time_point> _timeout;
+    io::file_descriptor_handle _fd = -1;
 };
 
 // used to register coroutines waiting for events and wait for all those events
@@ -548,7 +373,7 @@ class io_poll_context
       return *this;
     }
 
-    void wait_for(io_poll::awaitable& event)
+    void wait_for(io::poll::awaitable& event)
     {
       if (event.fd < 0 && event.fd >= FD_SETSIZE && !event.timeout)
       {
@@ -606,7 +431,7 @@ class io_poll_context
             timeout = *handler->timeout;
         }
 
-        if (fd == invalid_file_descriptor_handle)
+        if (fd == io::invalid_file_descriptor_handle)
           continue;
 
         assert(fd < FD_SETSIZE);
@@ -680,7 +505,7 @@ class io_poll_context
             continue;
           }
 
-          if (fd == invalid_file_descriptor_handle)
+          if (fd == io::invalid_file_descriptor_handle)
             continue;
 
           if (!(std::to_underlying(handler.event & io::poll_event::read    ) && FD_ISSET(fd, &readfds))
@@ -724,7 +549,7 @@ class io_poll_context
     }
 
   private:
-    std::unordered_multimap<file_descriptor_handle, io_poll::awaitable*> _polled_events;
+    std::unordered_multimap<io::file_descriptor_handle, io::poll::awaitable*> _polled_events;
     std::deque<std::coroutine_handle<>> _to_resume;
 };
 
@@ -866,7 +691,7 @@ struct event_wait_info
   event_wait_info* root_caller;
   std::deque<event_wait_info*> callees;
   std::coroutine_handle<> handle = std::noop_coroutine();
-  std::deque<io_poll::awaitable*> events;
+  std::deque<io::poll::awaitable*> events;
 
   constexpr event_wait_info() noexcept
     : root_caller(this)
@@ -994,18 +819,18 @@ class promise
     }
 
     template <typename MaybeAwaitable>
-    requires(!std::is_same_v<std::decay_t<MaybeAwaitable>, io_poll>)
+    requires(!std::is_same_v<std::decay_t<MaybeAwaitable>, io::poll>)
     constexpr MaybeAwaitable&& await_transform(MaybeAwaitable&& obj) noexcept
     {
       return std::forward<MaybeAwaitable>(obj);
     }
 
-    constexpr auto await_transform(io_poll&& obj) noexcept
+    constexpr auto await_transform(io::poll&& obj) noexcept
     {
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("await_transform"));
       ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(waits_on_me.root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
-      return io_poll::awaitable(std::move(obj), waits_on_me.root_caller->events);
+      return io::poll::awaitable(std::move(obj), waits_on_me.root_caller->events);
     }
 
     struct promise_retriever
@@ -1158,21 +983,21 @@ auto when_all(R&& futures) noexcept
   return when_all(begin(futures), end(futures));
 }
 
-future<void> sleep_until(io_poll::timeout_clock::time_point time) noexcept
+future<void> sleep_until(io::poll::timeout_clock::time_point time) noexcept
 {
-  ////auto timeout = time - io_poll::timeout_clock::now();
+  ////auto timeout = time - io::poll::timeout_clock::now();
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({}@{})\n", ts(), __LINE__, "sleep_until", std::chrono::duration_cast<std::chrono::milliseconds>(timeout), std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch()));
 
-  if (auto r = co_await io_poll(time);
+  if (auto r = co_await io::poll(time);
       !r && r.error() != std::errc::timed_out)
     co_return r;
   else
     co_return {};
 }
 
-future<void> sleep(io_poll::timeout_clock::duration time) noexcept
+future<void> sleep(io::poll::timeout_clock::duration time) noexcept
 {
-  return sleep_until(time + io_poll::timeout_clock::now());
+  return sleep_until(time + io::poll::timeout_clock::now());
 }
 
 inline future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf) noexcept
@@ -1185,7 +1010,7 @@ inline future<std::span<std::byte>> file_descriptor::read_some(std::span<std::by
     co_return rv;
 
   co_return (
-      co_await io_poll(fd, io::poll_event::read)
+      co_await io::poll(fd, io::poll_event::read)
     ).and_then([=] { return io::read_some(fd, buf); });
 }
 
@@ -1199,7 +1024,7 @@ inline future<std::span<const std::byte>> file_descriptor::write_some(std::span<
     co_return rv;
 
   co_return (
-      co_await io_poll(fd, io::poll_event::write)
+      co_await io::poll(fd, io::poll_event::write)
     ).and_then([=] { return io::write_some(fd, buf); });
 }
 
@@ -1217,7 +1042,7 @@ inline future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> c
 
   while (read_so_far < buf.size())
   {
-    if (auto wait = co_await io_poll(fd, io::poll_event::read); !wait)
+    if (auto wait = co_await io::poll(fd, io::poll_event::read); !wait)
       co_return wait.error();
 
     if (auto rv = io::read(fd, buf.subspan(read_so_far)); !rv)
@@ -1244,7 +1069,7 @@ inline future<void> file_descriptor::write(std::span<const std::byte> buf) noexc
 
   while (!buf.empty())
   {
-    if (auto wait = co_await io_poll(fd, io::poll_event::write); !wait)
+    if (auto wait = co_await io::poll(fd, io::poll_event::write); !wait)
       co_return wait;
 
     if (auto rv = io::write_some(fd, buf); !rv)
@@ -1302,7 +1127,7 @@ class stream_socket : public socket_descriptor
           rv || rv.error() != io::error::operation_not_ready)
         co_return rv;
 
-      if (auto wait = co_await io_poll(handle(), io::poll_event::write); !wait)
+      if (auto wait = co_await io::poll(handle(), io::poll_event::write); !wait)
         co_return wait;
 
       if (auto connect_result = io::getsockopt<io::sol_socket::error>(handle());
@@ -1431,7 +1256,7 @@ class mqtt
       std::memset(connect_pkt, 0, sizeof(connect_pkt));
 
 #if 1
-      if (auto r = co_await olifilo::io_poll(con._sock.handle(), olifilo::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io::poll(con._sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r.error();
 #endif
 
@@ -1473,7 +1298,7 @@ class mqtt
         co_return r;
 
 #if 1
-      if (auto r = co_await olifilo::io_poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io::poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r;
 #endif
 
@@ -1499,7 +1324,7 @@ class mqtt
         co_return r;
 
 #if 1
-      if (auto r = co_await olifilo::io_poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
+      if (auto r = co_await olifilo::io::poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
         co_return r;
 #endif
 
@@ -1534,7 +1359,7 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
   if (!r)
     co_return r;
 
-  using clock = olifilo::io_poll::timeout_clock;
+  using clock = olifilo::io::poll::timeout_clock;
   const auto keep_alive_wait_time = std::chrono::duration_cast<clock::duration>(r->keep_alive) * 3 / 4;
   const auto start = clock::now() - ts();
   constexpr auto run_time = 120s;
