@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <olifilo/expected.hpp>
+#include <olifilo/io/errors.hpp>
 
 #include "logging-stuff.hpp"
 
@@ -35,71 +36,6 @@
 
 template<class... Ts>
 struct overloaded : Ts... { using Ts::operator()...; };
-
-namespace olifilo
-{
-namespace io
-{
-enum class error
-{
-  operation_not_ready = 1,
-};
-
-struct error_category_t : std::error_category
-{
-  constexpr const char* name() const noexcept override
-  {
-    return "io-error";
-  }
-
-  constexpr std::string message(int ev) const override
-  {
-    switch (static_cast<error>(ev))
-    {
-      case error::operation_not_ready:
-        return "operation not yet finisehd or would block";
-    }
-
-    return "(unrecognized condition)";
-  }
-
-  constexpr bool equivalent(const std::error_code& ec, int cond) const noexcept override
-  {
-    switch (static_cast<error>(cond))
-    {
-      case error::operation_not_ready:
-        if (ec.category() != std::system_category()
-         && ec.category() != std::generic_category())
-          return false;
-
-        const auto errc = static_cast<std::errc>(ec.value());
-        return (errc == std::errc::resource_unavailable_try_again
-             || errc == std::errc::operation_would_block
-             || errc == std::errc::operation_in_progress);
-    }
-
-    return false;
-  }
-};
-
-constexpr const error_category_t& error_category() noexcept
-{
-  static error_category_t cat;
-  return cat;
-}
-
-std::error_condition make_error_condition(error e)
-{
-  return {static_cast<int>(e), error_category()};
-}
-}  // namespace io
-}  // namespace olifilo
-
-namespace std
-{
-  template <>
-  struct is_error_condition_enum<olifilo::io::error> : true_type {};
-}  // namespace std
 
 namespace olifilo
 {

@@ -18,10 +18,10 @@ add_link_options(
 
 include(CTest)
 
-add_library(${PROJECT_NAME} INTERFACE)
+add_library(${PROJECT_NAME})
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
-target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_23)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_23)
 
 set_target_properties(
   ${PROJECT_NAME}
@@ -31,11 +31,17 @@ set_target_properties(
 )
 
 target_sources(${PROJECT_NAME}
-  INTERFACE
+  PRIVATE
+    src/io/errors.cpp
+)
+
+target_sources(${PROJECT_NAME}
+  PUBLIC
     FILE_SET HEADERS
     TYPE HEADERS
     BASE_DIRS include
     FILES
+      include/olifilo/io/errors.hpp
       include/olifilo/expected.hpp
 )
 
