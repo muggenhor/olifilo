@@ -7,14 +7,22 @@ project(olifilo
   VERSION "0.0.1"
 )
 
-add_compile_options(
-  -fdiagnostics-color=always
-  #-fsanitize=undefined,address
-)
-add_link_options(
-  -fdiagnostics-color=always
-  #-fsanitize=undefined,address
-)
+if(UNIX AND (
+       (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    OR (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS "4.9"))
+    AND CMAKE_GENERATOR STREQUAL "Ninja")
+  # These compilers generate coloured output, but don't do so by default when writing to a pipe.
+  # Ninja captures in a pipe *and* subsequently strips out the VT100 codes (used for color) when Ninja
+  # itself isn't writing to a terminal. So this is both desirable and safe with Ninja.
+  add_compile_options(-fdiagnostics-color=always)
+  add_link_options(-fdiagnostics-color=always)
+endif()
+#add_compile_options(
+#  -fsanitize=undefined,address
+#)
+#add_link_options(
+#  -fsanitize=undefined,address
+#)
 
 include(CTest)
 
