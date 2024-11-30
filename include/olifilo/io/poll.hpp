@@ -54,6 +54,13 @@ struct poll
 #include <deque>
 
 // FIXME: move this type into promise and make its await_transform this type's factory function
+namespace olifilo::detail
+{
+class promise_wait_callgraph;
+constexpr void push_back(std::coroutine_handle<promise_wait_callgraph> waiter, io::poll::awaitable& event) noexcept;
+}
+
+// FIXME: move this type into promise and make its await_transform this type's factory function
 namespace olifilo::io
 {
 struct poll::awaitable : private poll
@@ -63,14 +70,16 @@ struct poll::awaitable : private poll
   using poll::timeout;
 
   expected<void> wait_result;
-  std::coroutine_handle<> waiter;
-  std::deque<awaitable*>* waits_on = nullptr;
+  std::coroutine_handle<detail::promise_wait_callgraph> waiter;
 
-  awaitable() = default;
+  // We need the location/address of this struct to be stable, so prohibit copying.
+  // But we're still allowing the copy constructor to be callable (but *not* actually called!) by our factory function
+  constexpr awaitable(awaitable&& rhs) = delete;
+  awaitable& operator=(const awaitable&) = delete;
 
-  explicit constexpr awaitable(const poll& event, std::deque<awaitable*>& waits_on) noexcept
+  explicit constexpr awaitable(const poll& event, std::coroutine_handle<detail::promise_wait_callgraph> waiter) noexcept
     : poll(event)
-    , waits_on(&waits_on)
+    , waiter(waiter)
   {
   }
 
@@ -84,14 +93,14 @@ struct poll::awaitable : private poll
     return std::move(wait_result);
   }
 
-  void await_suspend(std::coroutine_handle<> suspended)
+  void await_suspend(std::coroutine_handle<> suspended) noexcept
   {
-    waiter = suspended;
+    assert(waiter == suspended && "await_transform called from different coroutine than await_suspend!");
 
-    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(events@{}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "poll::awaitable::await_suspend", static_cast<const void*>(waits_on), static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
+    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "poll::awaitable::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
 
-    if (waits_on)
-      waits_on->push_back(this);
+    // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
+    detail::push_back(waiter, *this);
   }
 };
 }  // namespace olifilo::io

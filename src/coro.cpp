@@ -290,7 +290,7 @@ class file_descriptor
   public:
     file_descriptor() = default;
 
-    constexpr file_descriptor(io::file_descriptor_handle fd)
+    constexpr file_descriptor(io::file_descriptor_handle fd) noexcept
       : _fd(fd)
     {
     }
@@ -621,15 +621,15 @@ class future
       {
         unsigned j = 0;
 
-        assert(!promise.waits_on_me.events.empty() || !executor.empty());
+        assert(!promise.events.empty() || !executor.empty());
 
-        ////const auto now = std::decay_t<decltype(*promise.waits_on_me.events.front()->timeout)>::clock::now();
-        for (const auto event : promise.waits_on_me.events)
+        ////const auto now = std::decay_t<decltype(*promise.events.front()->timeout)>::clock::now();
+        for (const auto event : promise.events)
         {
-          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{},{}](root={}, events@{}, event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, j++, handle.address(), static_cast<const void*>(&promise.waits_on_me.events), static_cast<const void*>(event), event->events, event->fd, event->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), event->waiter.address());
+          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{},{}](root={}, events@{}, event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, j++, handle.address(), static_cast<const void*>(&promise.events), static_cast<const void*>(event), event->events, event->fd, event->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), event->waiter.address());
           executor.wait_for(*event);
         }
-        promise.waits_on_me.events.clear();
+        promise.events.clear();
 
         if (auto err = executor.run_one(); err)
           return unexpected(err);
@@ -655,7 +655,7 @@ class future
     void await_suspend(std::coroutine_handle<> suspended)
     {
       auto& promise = handle.promise();
-      promise.waits_on_me.handle = suspended;
+      promise.waits_on_me = suspended;
     }
 
     constexpr expected<T> await_resume() noexcept
@@ -689,26 +689,31 @@ class future
 
 namespace detail
 {
-struct event_wait_info
+struct promise_wait_callgraph
 {
-  event_wait_info* root_caller;
-  std::deque<event_wait_info*> callees;
-  std::coroutine_handle<> handle = std::noop_coroutine();
+  promise_wait_callgraph* root_caller;
+  std::deque<promise_wait_callgraph*> callees;
+  std::coroutine_handle<> waits_on_me = std::noop_coroutine();
   std::deque<io::poll::awaitable*> events;
 
-  constexpr event_wait_info() noexcept
+  constexpr promise_wait_callgraph() noexcept
     : root_caller(this)
   {
   }
 
-  ~event_wait_info()
+  ~promise_wait_callgraph()
   {
     std::erase(root_caller->callees, this);
   }
 
-  event_wait_info(event_wait_info&&) = delete;
-  event_wait_info& operator=(event_wait_info&&) = delete;
+  promise_wait_callgraph(promise_wait_callgraph&&) = delete;
+  promise_wait_callgraph& operator=(promise_wait_callgraph&&) = delete;
 };
+
+constexpr void push_back(std::coroutine_handle<promise_wait_callgraph> waiter, io::poll::awaitable& event) noexcept
+{
+  waiter.promise().root_caller->events.push_back(&event);
+}
 }
 
 class my_current_promise
@@ -725,7 +730,7 @@ class my_current_promise
 };
 
 template <typename T>
-class promise
+class promise : private detail::promise_wait_callgraph
 {
   public:
     future<T> get_return_object() { return future<T>(std::coroutine_handle<promise>::from_promise(*this)); }
@@ -748,7 +753,7 @@ class promise
         return std::exchange(waiter, nullptr);
       }
     };
-    constexpr final_resume_waiter final_suspend() noexcept { return {std::exchange(waits_on_me.handle, nullptr)}; }
+    constexpr final_resume_waiter final_suspend() noexcept { return {std::exchange(waits_on_me, nullptr)}; }
     constexpr void unhandled_exception() noexcept
     {
       if constexpr (is_expected_with_std_error_code_v<T>)
@@ -784,24 +789,24 @@ class promise
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("await_transform"));
 
-      if (auto* const callee_promise = fut.handle ? &fut.handle.promise() : nullptr)
+      if (detail::promise_wait_callgraph* const callee_promise = fut.handle ? &fut.handle.promise() : nullptr)
       {
-        if (std::ranges::find(waits_on_me.callees, &callee_promise->waits_on_me) == waits_on_me.callees.end())
-          waits_on_me.callees.push_back(&callee_promise->waits_on_me);
+        if (std::ranges::find(callees, callee_promise) == callees.end())
+          callees.push_back(callee_promise);
 
-        auto& events_queue = waits_on_me.root_caller->events;
+        auto& events_queue = root_caller->events;
 
-        for (std::size_t i = 0; i < waits_on_me.callees.size(); ++i)
+        for (std::size_t i = 0; i < callees.size(); ++i)
         {
           // Recurse into grand children
           {
-            auto grand_children = std::move(waits_on_me.callees[i]->callees);
-            waits_on_me.callees.insert(waits_on_me.callees.end(), begin(grand_children), end(grand_children));
+            auto grand_children = std::move(callees[i]->callees);
+            callees.insert(callees.end(), begin(grand_children), end(grand_children));
           }
 
-          const auto& child = waits_on_me.callees[i];
+          const auto& child = callees[i];
 
-          child->root_caller = &waits_on_me;
+          child->root_caller = this;
           ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](child={}, child->root={}\n", ts(), __LINE__, func_name, i, std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(child)).address(), std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(child->root_caller)).address());
 
           // Steal all events from all child futures
@@ -817,7 +822,7 @@ class promise
           }
         }
       }
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(waits_on_me.root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
+      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*static_cast<promise*>(root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
       return std::move(fut);
     }
 
@@ -832,8 +837,8 @@ class promise
     {
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("await_transform"));
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(waits_on_me.root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
-      return io::poll::awaitable(std::move(obj), waits_on_me.root_caller->events);
+      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*static_cast<promise*>(root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
+      return io::poll::awaitable(std::move(obj), std::coroutine_handle<detail::promise_wait_callgraph>::from_promise(*this));
     }
 
     struct promise_retriever
@@ -871,8 +876,6 @@ class promise
     friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
 
   private:
-    detail::event_wait_info waits_on_me;
-
     std::optional<expected<T>> returned_value;
 };
 
@@ -884,15 +887,15 @@ future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
 
   auto& my_promise = co_await my_current_promise();
   const auto me = std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise);
-  assert(my_promise.waits_on_me.events.empty());
-  assert(my_promise.waits_on_me.root_caller == &my_promise.waits_on_me);
+  assert(my_promise.events.empty());
+  assert(my_promise.root_caller == &my_promise);
 
   // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
   // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
   (my_promise.await_transform(std::move(futures)), ...);
 
   // Ensure all futures know to awake us
-  ((futures.handle.promise().waits_on_me.handle = me), ...);
+  ((futures.handle.promise().waits_on_me = me), ...);
 
   // Now allow this future's .get() to handle the actual I/O multiplexing
   co_return std::tuple<Ts...>((co_await std::move(futures))...);
