@@ -674,7 +674,7 @@ class future
     template <typename U>
     friend class promise;
     template <typename... Ts>
-    friend future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept;
+    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
     template <std::forward_iterator I, std::sentinel_for<I> S>
     requires(is_future_v<typename std::iterator_traits<I>::value_type>)
     friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
@@ -723,7 +723,7 @@ class my_current_promise
 
     // Only friends are allowed to know the promise they run in
     template <typename... Ts>
-    friend future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept;
+    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
     template <std::forward_iterator I, std::sentinel_for<I> S>
     requires(is_future_v<typename std::iterator_traits<I>::value_type>)
     friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
@@ -870,7 +870,7 @@ class promise : private detail::promise_wait_callgraph
     friend class promise;
     friend class future<T>;
     template <typename... Ts>
-    friend future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept;
+    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
     template <std::forward_iterator I, std::sentinel_for<I> S>
     requires(is_future_v<typename std::iterator_traits<I>::value_type>)
     friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
@@ -880,7 +880,7 @@ class promise : private detail::promise_wait_callgraph
 };
 
 template <typename... Ts>
-future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
+future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept
 {
   ////std::string_view func_name(__PRETTY_FUNCTION__);
   ////func_name = func_name.substr(func_name.find("when_all"));
@@ -898,7 +898,7 @@ future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
   ((futures.handle.promise().waits_on_me = me), ...);
 
   // Now allow this future's .get() to handle the actual I/O multiplexing
-  co_return std::tuple<Ts...>((co_await std::move(futures))...);
+  co_return std::tuple<expected<Ts>...>((co_await futures)...);
 }
 
 template <std::forward_iterator I, std::sentinel_for<I> S>
@@ -1345,7 +1345,7 @@ int main()
       !r)
     throw std::system_error(r.error());
 #elif 0
-  if (auto [r1, r2] = when_all(do_mqtt(1), do_mqtt(2)).get();
+  if (auto [r1, r2] = when_all(do_mqtt(1), do_mqtt(2)).get().value();
       !r1 || !r2)
     throw std::system_error(!r1 ? r1.error() : r2.error());
 #else
