@@ -3,7 +3,9 @@
 #include <olifilo/expected.hpp>
 #include <olifilo/io/errors.hpp>
 #include <olifilo/io/poll.hpp>
+#include <olifilo/io/read.hpp>
 #include <olifilo/io/types.hpp>
+#include <olifilo/io/write.hpp>
 
 #include "logging-stuff.hpp"
 
@@ -44,42 +46,6 @@ namespace olifilo
 // expected<T, std::error_code> wrappers for I/O syscalls
 namespace io
 {
-expected<std::size_t> read(file_descriptor_handle fd, std::span<std::byte> buf) noexcept
-{
-  if (auto rv = ::read(fd, buf.data(), buf.size_bytes());
-      rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return static_cast<std::size_t>(rv);
-}
-
-expected<std::size_t> write(file_descriptor_handle fd, std::span<const std::byte> buf) noexcept
-{
-  if (auto rv = ::write(fd, buf.data(), buf.size_bytes());
-      rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return static_cast<std::size_t>(rv);
-}
-
-expected<std::span<std::byte>> read_some(file_descriptor_handle fd, std::span<std::byte> buf) noexcept
-{
-  if (auto rv = read(fd, buf);
-      !rv)
-    return rv.error();
-  else
-    return buf.first(*rv);
-}
-
-expected<std::span<const std::byte>> write_some(file_descriptor_handle fd, std::span<const std::byte> buf) noexcept
-{
-  if (auto rv = write(fd, buf);
-      !rv)
-    return rv.error();
-  else
-    return buf.subspan(*rv);
-}
-
 template <typename... Args>
 expected<int> fcntl(file_descriptor_handle fd, int cmd, Args&&... args) noexcept
 {

@@ -51,7 +51,9 @@ target_sources(${PROJECT_NAME}
     FILES
       include/olifilo/io/errors.hpp
       include/olifilo/io/poll.hpp
+      include/olifilo/io/read.hpp
       include/olifilo/io/types.hpp
+      include/olifilo/io/write.hpp
       include/olifilo/expected.hpp
 )
 
