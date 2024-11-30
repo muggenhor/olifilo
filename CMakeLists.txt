@@ -51,6 +51,8 @@ include(GNUInstallDirs)
 install(
   TARGETS
     ${PROJECT_NAME}
+  EXPORT
+    ${PROJECT_NAME}
   RUNTIME
     COMPONENT Runtime
   LIBRARY
@@ -60,6 +62,12 @@ install(
     COMPONENT Development
   FILE_SET HEADERS
     COMPONENT Development
+)
+install(EXPORT
+  ${PROJECT_NAME}
+  FILE ${PROJECT_NAME}.cmake
+  NAMESPACE ${PROJECT_NAME}::
+  DESTINATION lib/cmake/${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
