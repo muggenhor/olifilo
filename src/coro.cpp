@@ -894,63 +894,8 @@ future<std::tuple<Ts...>> when_all(future<Ts>... futures) noexcept
   // Ensure all futures know to awake us
   ((futures.handle.promise().waits_on_me.handle = me), ...);
 
-#if 1
   // Now allow this future's .get() to handle the actual I/O multiplexing
   co_return std::tuple<Ts...>((co_await std::move(futures))...);
-#else
-  // Suspend once for each unfinished future (we should be awoken by them). Allowing our own future's .get() to handle the actual I/O multiplexing.
-  (((futures.handle && !futures.handle.done()) ? co_await std::suspend_always() : void()), ...);
-
-  // Collect and return all results of our futures
-  co_return std::tuple<Ts...>((futures.await_resume())...);
-#endif
-#if 0
-  std::ranges::copy(std::initializer_list{
-      ((futures.handle && !futures.handle.done()) ? &futures.handle.promise().waits_on_me : static_cast<detail::event_wait_info*>(nullptr))...
-    }, std::back_inserter(my_promise.waits_on_me.callees));
-
-  auto& events_queue = my_promise.waits_on_me.root_caller->events;
-  for (std::size_t i = 0; i < my_promise.waits_on_me.callees.size(); ++i)
-  {
-    // Recurse into grand children
-    {
-      auto grand_children = std::move(my_promise.waits_on_me.callees[i]->callees);
-      my_promise.waits_on_me.callees.insert(my_promise.waits_on_me.callees.end(), begin(grand_children), end(grand_children));
-    }
-
-    const auto& child = my_promise.waits_on_me.callees[i];
-
-    // Ensure child futures register new events on our promise
-    child->root_caller = &my_promise.waits_on_me;
-
-    for (const auto& event : child->events)
-    {
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, waiter={}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(*reinterpret_cast<std::decay_t<decltype(my_promise)>*>(child)).address(), static_cast<const void*>(event), event->events, event->fd, event->waiter.address());
-    }
-
-    // Steal all events from all child futures
-    if (events_queue.empty())
-    {
-      events_queue = std::move(child->events);
-    }
-    else
-    {
-      // move entire container to ensure memory is recovered at scope exit
-      auto moved_events = std::move(child->events);
-      events_queue.insert(events_queue.end(), begin(moved_events), end(moved_events));
-    }
-  }
-
-  assert(&events_queue == &my_promise.waits_on_me.events);
-  std::size_t i = 0;
-  for (const auto& event : events_queue)
-  {
-    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](root={}, events@{}, event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, func_name, i++, std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise).address(), static_cast<const void*>(&events_queue), static_cast<const void*>(event), event->events, event->fd, event->waiter.address());
-  }
-
-  // Allow future.get() to handle the actual I/O multiplexing
-  co_return std::tuple<Ts...>((co_await std::move(futures))...);
-#endif
 }
 
 template <std::forward_iterator I, std::sentinel_for<I> S>
