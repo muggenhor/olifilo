@@ -2,6 +2,7 @@
 
 #include <olifilo/expected.hpp>
 #include <olifilo/io/errors.hpp>
+#include <olifilo/io/fcntl.hpp>
 #include <olifilo/io/poll.hpp>
 #include <olifilo/io/read.hpp>
 #include <olifilo/io/types.hpp>
@@ -31,7 +32,6 @@
 #include <utility>
 
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/select.h>
@@ -46,25 +46,6 @@ namespace olifilo
 // expected<T, std::error_code> wrappers for I/O syscalls
 namespace io
 {
-template <typename... Args>
-expected<int> fcntl(file_descriptor_handle fd, int cmd, Args&&... args) noexcept
-{
-  if (auto rv = ::fcntl(fd, cmd, std::forward<Args>(args)...); rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return rv;
-}
-
-expected<int> fcntl_get_file_status_flags(file_descriptor_handle fd) noexcept
-{
-  return fcntl(fd, F_GETFL);
-}
-
-expected<void> fcntl_set_file_status_flags(file_descriptor_handle fd, int flags) noexcept
-{
-  return fcntl(fd, F_SETFL, flags);
-}
-
 expected<file_descriptor_handle> socket(int domain, int type, int protocol = 0) noexcept
 {
   if (file_descriptor_handle rv(::socket(domain, type, protocol)); !rv)

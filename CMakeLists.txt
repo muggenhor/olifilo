@@ -50,6 +50,7 @@ target_sources(${PROJECT_NAME}
     BASE_DIRS include
     FILES
       include/olifilo/io/errors.hpp
+      include/olifilo/io/fcntl.hpp
       include/olifilo/io/poll.hpp
       include/olifilo/io/read.hpp
       include/olifilo/io/types.hpp
