@@ -655,6 +655,7 @@ class future
     void await_suspend(std::coroutine_handle<> suspended)
     {
       auto& promise = handle.promise();
+      assert(promise.waits_on_me == nullptr && "only a single coroutine should have a future for this coroutine to co_await on!");
       promise.waits_on_me = suspended;
     }
 
@@ -693,7 +694,7 @@ struct promise_wait_callgraph
 {
   promise_wait_callgraph* root_caller;
   std::deque<promise_wait_callgraph*> callees;
-  std::coroutine_handle<> waits_on_me = std::noop_coroutine();
+  std::coroutine_handle<> waits_on_me;
   std::deque<io::poll::awaitable*> events;
 
   constexpr promise_wait_callgraph() noexcept
@@ -737,7 +738,7 @@ class promise : private detail::promise_wait_callgraph
     constexpr std::suspend_never initial_suspend() noexcept { return {}; }
     struct final_resume_waiter
     {
-      std::coroutine_handle<> waiter = std::noop_coroutine();
+      std::coroutine_handle<> waiter;
 
       constexpr bool await_ready() const noexcept
       {
@@ -753,7 +754,13 @@ class promise : private detail::promise_wait_callgraph
         return std::exchange(waiter, nullptr);
       }
     };
-    constexpr final_resume_waiter final_suspend() noexcept { return {std::exchange(waits_on_me, nullptr)}; }
+    constexpr final_resume_waiter final_suspend() noexcept
+    {
+      auto waiter = std::exchange(waits_on_me, nullptr);
+      if (!waiter)
+        waiter = std::noop_coroutine();
+      return {waiter};
+    }
     constexpr void unhandled_exception() noexcept
     {
       if constexpr (is_expected_with_std_error_code_v<T>)
@@ -886,16 +893,12 @@ future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept
   ////func_name = func_name.substr(func_name.find("when_all"));
 
   auto& my_promise = co_await my_current_promise();
-  const auto me = std::coroutine_handle<std::decay_t<decltype(my_promise)>>::from_promise(my_promise);
   assert(my_promise.events.empty());
   assert(my_promise.root_caller == &my_promise);
 
   // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
   // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
   (my_promise.await_transform(std::move(futures)), ...);
-
-  // Ensure all futures know to awake us
-  ((futures.handle.promise().waits_on_me = me), ...);
 
   // Now allow this future's .get() to handle the actual I/O multiplexing
   co_return std::tuple<expected<Ts>...>((co_await futures)...);
