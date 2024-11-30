@@ -49,10 +49,13 @@ target_sources(${PROJECT_NAME}
     TYPE HEADERS
     BASE_DIRS include
     FILES
+      include/olifilo/io/connect.hpp
       include/olifilo/io/errors.hpp
       include/olifilo/io/fcntl.hpp
       include/olifilo/io/poll.hpp
       include/olifilo/io/read.hpp
+      include/olifilo/io/socket.hpp
+      include/olifilo/io/shutdown.hpp
       include/olifilo/io/types.hpp
       include/olifilo/io/write.hpp
       include/olifilo/expected.hpp

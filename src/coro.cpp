@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <olifilo/expected.hpp>
+#include <olifilo/io/connect.hpp>
 #include <olifilo/io/errors.hpp>
 #include <olifilo/io/fcntl.hpp>
 #include <olifilo/io/poll.hpp>
 #include <olifilo/io/read.hpp>
+#include <olifilo/io/shutdown.hpp>
+#include <olifilo/io/socket.hpp>
 #include <olifilo/io/types.hpp>
 #include <olifilo/io/write.hpp>
 
@@ -35,7 +38,6 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/select.h>
-#include <sys/socket.h>
 #include <unistd.h>
 
 template<class... Ts>
@@ -46,37 +48,6 @@ namespace olifilo
 // expected<T, std::error_code> wrappers for I/O syscalls
 namespace io
 {
-expected<file_descriptor_handle> socket(int domain, int type, int protocol = 0) noexcept
-{
-  if (file_descriptor_handle rv(::socket(domain, type, protocol)); !rv)
-    return std::error_code(errno, std::system_category());
-  else
-    return rv;
-}
-
-expected<void> connect(file_descriptor_handle fd, const struct ::sockaddr* addr, ::socklen_t addrlen) noexcept
-{
-  if (auto rv = ::connect(fd, addr, addrlen); rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return {};
-}
-
-enum class shutdown_how : int
-{
-  read = SHUT_RD,
-  write = SHUT_WR,
-  read_write = SHUT_RDWR,
-};
-
-expected<void> shutdown(file_descriptor_handle fd, shutdown_how how) noexcept
-{
-  if (auto rv = ::shutdown(fd, std::to_underlying(how)); rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return {};
-}
-
 expected<unsigned> select(unsigned nfds, ::fd_set* readfds, ::fd_set* writefds, ::fd_set* exceptfds, struct ::timeval* timeout = nullptr) noexcept
 {
   if (nfds > static_cast<unsigned>(std::numeric_limits<int>::max()))
