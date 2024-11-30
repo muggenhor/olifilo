@@ -325,7 +325,7 @@ class io_poll_context
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("run_one"));
 
-      unsigned i = 0;
+      ////unsigned i = 0;
       while (!_to_resume.empty())
       {
         auto waiter = _to_resume.front();
@@ -345,7 +345,7 @@ class io_poll_context
       decltype(_polled_events.begin()->second->timeout) timeout;
 
       ////const auto now = std::decay_t<decltype(*timeout)>::clock::now();
-      i = 0;
+      ////i = 0;
       for (const auto& [fd, handler] : _polled_events)
       {
         ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, static_cast<const void*>(handler), handler->events, handler->fd, handler->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler->waiter.address());
@@ -447,7 +447,7 @@ class io_poll_context
         }
       }
 
-      i = 0;
+      ////i = 0;
       while (!_to_resume.empty())
       {
         auto waiter = std::move(_to_resume.front());
@@ -539,11 +539,11 @@ class future
 
       auto& promise = handle.promise();
 
-      unsigned i = 0;
+      ////unsigned i = 0;
 
       while (!handle.done())
       {
-        unsigned j = 0;
+        ////unsigned j = 0;
 
         assert(!promise.events.empty() || !executor.empty());
 
@@ -673,7 +673,7 @@ class promise : private detail::promise_wait_callgraph
       {
       }
 
-      constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended) noexcept
+      constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended [[maybe_unused]]) noexcept
       {
         return std::exchange(waiter, nullptr);
       }
@@ -1158,7 +1158,7 @@ class mqtt
       if (static_cast<std::uint8_t>((*ack_pkt)[1]) != 2) // variable length header portion must be exactly 2 bytes
         co_return std::make_error_code(std::errc::bad_message);
 
-      if (static_cast<std::uint8_t>((*ack_pkt)[2]) & 0x01 != 0) // session-present flag must be unset (i.e. we MUST NOT have a server-side session)
+      if ((static_cast<std::uint8_t>((*ack_pkt)[2]) & 0x01) != 0) // session-present flag must be unset (i.e. we MUST NOT have a server-side session)
         co_return std::make_error_code(std::errc::bad_message);
 
       const auto connect_return_code = static_cast<std::uint8_t>((*ack_pkt)[3]);
