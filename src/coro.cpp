@@ -1343,22 +1343,32 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
 
 int main()
 {
+  using olifilo::when_all;
+
 #if 0
   if (auto r = do_mqtt(0).get();
       !r)
     throw std::system_error(r.error());
-#elif 0
-  if (auto [r1, r2] = when_all(do_mqtt(1), do_mqtt(2)).get().value();
-      !r1 || !r2)
-    throw std::system_error(!r1 ? r1.error() : r2.error());
 #else
-  auto rs = olifilo::when_all(std::array{do_mqtt(3), do_mqtt(4)}).get();
-  if (!rs)
-    throw std::system_error(rs.error());
-  for (auto& ri : *rs)
+  if (auto [r1, r2, rs] = when_all(
+        do_mqtt(1)
+      , do_mqtt(2)
+      , when_all(std::array{
+          do_mqtt(3),
+          do_mqtt(4),
+        })
+      ).get().value();
+      !r1 || !r2 || !rs)
   {
-    if (!ri)
-      throw std::system_error(ri.error());
+    throw std::system_error(!r1 ? r1.error() : !r2 ? r2.error() : rs.error());
+  }
+  else
+  {
+    for (auto& ri : *rs)
+    {
+      if (!ri)
+        throw std::system_error(ri.error());
+    }
   }
 #endif
 }
