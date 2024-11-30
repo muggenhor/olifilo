@@ -285,6 +285,12 @@ struct is_future<future<T>> : std::true_type {};
 template <typename T>
 inline constexpr bool is_future_v = is_future<T>::value;
 
+enum class eagerness
+{
+  lazy,
+  eager,
+};
+
 class file_descriptor
 {
   public:
@@ -339,11 +345,11 @@ class file_descriptor
       return std::exchange(_fd, nullptr);
     }
 
-    future<std::span<std::byte>> read_some(std::span<std::byte> buf) noexcept;
-    future<std::span<const std::byte>> write_some(std::span<const std::byte> buf) noexcept;
+    future<std::span<std::byte>> read_some(std::span<std::byte> buf, eagerness eager = eagerness::eager) noexcept;
+    future<std::span<const std::byte>> write_some(std::span<const std::byte> buf, eagerness eager = eagerness::eager) noexcept;
 
-    future<std::span<std::byte>> read(std::span<std::byte> buf) noexcept;
-    future<void> write(std::span<const std::byte> buf) noexcept;
+    future<std::span<std::byte>> read(std::span<std::byte> buf, eagerness eager = eagerness::eager) noexcept;
+    future<void> write(std::span<const std::byte> buf, eagerness eager = eagerness::eager) noexcept;
 
   private:
     io::file_descriptor_handle _fd;
@@ -954,45 +960,54 @@ future<void> sleep(io::poll::timeout_clock::duration time) noexcept
   return sleep_until(time + io::poll::timeout_clock::now());
 }
 
-inline future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf) noexcept
+inline future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf, eagerness eager) noexcept
 {
   const auto fd = handle();
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::read_some", fd, buf.size());
 
-  if (auto rv = io::read_some(fd, buf);
-      rv || rv.error() != io::error::operation_not_ready)
-    co_return rv;
+  if (eager == eagerness::eager)
+  {
+    if (auto rv = io::read_some(fd, buf);
+        rv || rv.error() != io::error::operation_not_ready)
+      co_return rv;
+  }
 
   co_return (
       co_await io::poll(fd, io::poll_event::read)
     ).and_then([=] { return io::read_some(fd, buf); });
 }
 
-inline future<std::span<const std::byte>> file_descriptor::write_some(std::span<const std::byte> buf) noexcept
+inline future<std::span<const std::byte>> file_descriptor::write_some(std::span<const std::byte> buf, eagerness eager) noexcept
 {
   const auto fd = handle();
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::write_some", fd, buf.size());
 
-  if (auto rv = io::write_some(fd, buf);
-      rv || rv.error() != io::error::operation_not_ready)
-    co_return rv;
+  if (eager == eagerness::eager)
+  {
+    if (auto rv = io::write_some(fd, buf);
+        rv || rv.error() != io::error::operation_not_ready)
+      co_return rv;
+  }
 
   co_return (
       co_await io::poll(fd, io::poll_event::write)
     ).and_then([=] { return io::write_some(fd, buf); });
 }
 
-inline future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> const buf) noexcept
+inline future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> const buf, eagerness eager) noexcept
 {
   const auto fd = handle();
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::read", fd, buf.size());
   std::size_t read_so_far = 0;
 
-  if (auto rv = io::read(fd, buf);
-      !rv && rv.error() != io::error::operation_not_ready)
-    co_return rv.error();
-  else if (rv)
-    read_so_far += *rv;
+  if (eager == eagerness::eager)
+  {
+    if (auto rv = io::read(fd, buf);
+        !rv && rv.error() != io::error::operation_not_ready)
+      co_return rv.error();
+    else if (rv)
+      read_so_far += *rv;
+  }
 
   while (read_so_far < buf.size())
   {
@@ -1010,16 +1025,19 @@ inline future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> c
   co_return buf;
 }
 
-inline future<void> file_descriptor::write(std::span<const std::byte> buf) noexcept
+inline future<void> file_descriptor::write(std::span<const std::byte> buf, eagerness eager) noexcept
 {
   const auto fd = handle();
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::write", fd, buf.size());
 
-  if (auto rv = io::write_some(fd, buf);
-      !rv && rv.error() != io::error::operation_not_ready)
-    co_return rv;
-  else if (rv)
-    buf = *rv;
+  if (eager == eagerness::eager)
+  {
+    if (auto rv = io::write_some(fd, buf);
+        !rv && rv.error() != io::error::operation_not_ready)
+      co_return rv;
+    else if (rv)
+      buf = *rv;
+  }
 
   while (!buf.empty())
   {
@@ -1209,13 +1227,8 @@ class mqtt
 
       std::memset(connect_pkt, 0, sizeof(connect_pkt));
 
-#if 1
-      if (auto r = co_await olifilo::io::poll(con._sock.handle(), olifilo::io::poll_event::read); !r)
-        co_return r.error();
-#endif
-
       // expect CONNACK
-      auto ack_pkt = co_await con._sock.read(as_writable_bytes(std::span(connect_pkt, 4)));
+      auto ack_pkt = co_await con._sock.read(as_writable_bytes(std::span(connect_pkt, 4)), olifilo::eagerness::lazy);
       if (!ack_pkt)
         co_return ack_pkt.error();
       else if (ack_pkt->size() != 4)
@@ -1251,12 +1264,7 @@ class mqtt
       if (auto r = this->_sock.shutdown(olifilo::io::shutdown_how::write); !r)
         co_return r;
 
-#if 1
-      if (auto r = co_await olifilo::io::poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
-        co_return r;
-#endif
-
-      if (auto r = co_await this->_sock.read_some(as_writable_bytes(std::span(disconnect_pkt, 1)));
+      if (auto r = co_await this->_sock.read_some(as_writable_bytes(std::span(disconnect_pkt, 1)), olifilo::eagerness::lazy);
           !r)
         co_return r;
       else if (!r->empty())
@@ -1277,13 +1285,8 @@ class mqtt
           !r)
         co_return r;
 
-#if 1
-      if (auto r = co_await olifilo::io::poll(this->_sock.handle(), olifilo::io::poll_event::read); !r)
-        co_return r;
-#endif
-
       // expect PINGRESP
-      auto ack_pkt = co_await this->_sock.read(as_writable_bytes(std::span(ping_pkt)));
+      auto ack_pkt = co_await this->_sock.read(as_writable_bytes(std::span(ping_pkt)), olifilo::eagerness::lazy);
       if (!ack_pkt)
         co_return ack_pkt;
       else if (ack_pkt->size() != 2)
