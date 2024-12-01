@@ -14,20 +14,17 @@
 #include <olifilo/errors.hpp>
 #include <olifilo/io/poll.hpp>
 
-namespace olifilo
+namespace olifilo::detail
 {
-class my_current_promise
+class current_promise
 {
   private:
-    my_current_promise() = default;
+    current_promise() = default;
 
     // Only friends are allowed to know the promise they run in
     friend when_all_t;
 };
-}
 
-namespace olifilo::detail
-{
 struct awaitable_poll;
 
 struct promise_wait_callgraph
@@ -227,7 +224,7 @@ class promise : private detail::promise_wait_callgraph
       }
     };
 
-    constexpr auto await_transform(my_current_promise&&) noexcept
+    constexpr auto await_transform(current_promise&&) noexcept
     {
       return promise_retriever{*this};
     }

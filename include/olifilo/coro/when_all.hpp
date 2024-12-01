@@ -23,7 +23,7 @@ struct when_all_t
     ////std::string_view func_name(__PRETTY_FUNCTION__);
     ////func_name = func_name.substr(func_name.find("operator"));
 
-    auto& my_promise = co_await my_current_promise();
+    auto& my_promise = co_await detail::current_promise();
     assert(my_promise.events.empty());
     assert(my_promise.root_caller == &my_promise);
 
@@ -44,7 +44,7 @@ struct when_all_t
 
     std::vector<typename std::iterator_traits<I>::value_type::value_type> rv;
 
-    auto& my_promise = co_await my_current_promise();
+    auto& my_promise = co_await detail::current_promise();
     assert(my_promise.events.empty());
     assert(my_promise.root_caller == &my_promise);
 
