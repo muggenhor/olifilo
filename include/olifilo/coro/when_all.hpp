@@ -32,7 +32,9 @@ struct when_all_t
     ((futures = my_promise.await_transform(std::move(futures))), ...);
 
     // Now allow this future's .get() to handle the actual I/O multiplexing
-    co_return std::tuple<expected<Ts>...>((co_await futures)...);
+    expected<std::tuple<expected<Ts>...>>&& rv = std::move(my_promise.returned_value);
+    rv.emplace((co_await futures)...);
+    co_return rv;
   }
 
   template <std::forward_iterator I, std::sentinel_for<I> S>
@@ -41,8 +43,6 @@ struct when_all_t
   {
     ////std::string_view func_name(__PRETTY_FUNCTION__);
     ////func_name = func_name.substr(func_name.find("operator"));
-
-    std::vector<typename std::iterator_traits<I>::value_type::value_type> rv;
 
     auto& my_promise = co_await detail::current_promise();
     assert(my_promise.events.empty());
@@ -53,10 +53,12 @@ struct when_all_t
     for (auto i = first; i != last; ++i, ++count)
       *i = my_promise.await_transform(std::move(*i));
 
-    rv.reserve(count);
+    expected<std::vector<typename std::iterator_traits<I>::value_type::value_type>>&& rv = std::move(my_promise.returned_value);
+    rv.emplace();
+    rv->reserve(count);
     // Now allow this future's .get() to handle the actual I/O multiplexing while collecting the results
     for (; first != last; ++first)
-      rv.emplace_back(co_await *first);
+      rv->emplace_back(co_await *first);
 
     co_return rv;
   }
