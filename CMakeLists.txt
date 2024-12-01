@@ -49,6 +49,7 @@ target_sources(${PROJECT_NAME}
     TYPE HEADERS
     BASE_DIRS include
     FILES
+      include/olifilo/coro/detail/io_poll_context.hpp
       include/olifilo/io/connect.hpp
       include/olifilo/io/errors.hpp
       include/olifilo/io/fcntl.hpp
