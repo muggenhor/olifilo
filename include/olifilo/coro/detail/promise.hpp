@@ -76,8 +76,13 @@ struct awaitable_poll : private io::poll
     return false;
   }
 
-  constexpr auto await_resume() const noexcept
+  constexpr auto await_resume() const
   {
+    // Simple cancellation implementation that'll propagate through the coroutine stack.
+    // It's caught by unhandled_exception and stored again as error_code there
+    if (!wait_result && wait_result.error() == std::errc::operation_canceled)
+      throw std::system_error(wait_result.error(), "io::poll");
+
     return std::move(wait_result);
   }
 

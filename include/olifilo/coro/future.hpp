@@ -107,7 +107,7 @@ class future
       promise.waits_on_me = suspended;
     }
 
-    constexpr expected<T> await_resume() noexcept
+    constexpr expected<T> await_resume()
     {
       assert(handle);
       assert(handle.done());
@@ -115,6 +115,12 @@ class future
 
       assert(promise.returned_value);
       expected<T> rv(std::move(*promise.returned_value));
+
+      // Simple cancellation implementation that'll propagate through the coroutine stack.
+      // It's caught by unhandled_exception and stored again as error_code there
+      if (!rv && rv.error() == std::errc::operation_canceled)
+        throw std::system_error(rv.error());
+
       destroy();
       return rv;
     }
