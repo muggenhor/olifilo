@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <olifilo/coro/future.hpp>
+#include <olifilo/coro/io/file_descriptor.hpp>
 #include <olifilo/coro/when_all.hpp>
 #include <olifilo/expected.hpp>
 #include <olifilo/io/connect.hpp>
@@ -47,76 +48,6 @@ struct overloaded : Ts... { using Ts::operator()...; };
 
 namespace olifilo
 {
-enum class eagerness
-{
-  lazy,
-  eager,
-};
-
-class file_descriptor
-{
-  public:
-    file_descriptor() = default;
-
-    constexpr file_descriptor(io::file_descriptor_handle fd) noexcept
-      : _fd(fd)
-    {
-    }
-
-    virtual ~file_descriptor()
-    {
-      close();
-    }
-
-    file_descriptor(file_descriptor&& rhs) noexcept
-      : _fd(rhs.release())
-    {
-    }
-
-    file_descriptor& operator=(file_descriptor&& rhs) noexcept
-    {
-      if (&rhs != this)
-      {
-        close();
-        _fd = rhs.release();
-      }
-      return *this;
-    }
-
-    void close() noexcept
-    {
-      if (_fd)
-      {
-        ::close(_fd);
-        _fd = nullptr;
-      }
-    }
-
-    constexpr explicit operator bool() const noexcept
-    {
-      return static_cast<bool>(_fd);
-    }
-
-    constexpr io::file_descriptor_handle handle() const noexcept
-    {
-      return _fd;
-    }
-
-    constexpr io::file_descriptor_handle release() noexcept
-    {
-      return std::exchange(_fd, nullptr);
-    }
-
-    future<std::span<std::byte>> read_some(std::span<std::byte> buf, eagerness eager = eagerness::eager) noexcept;
-    future<std::span<const std::byte>> write_some(std::span<const std::byte> buf, eagerness eager = eagerness::eager) noexcept;
-
-    future<std::span<std::byte>> read(std::span<std::byte> buf, eagerness eager = eagerness::eager) noexcept;
-    future<void> write(std::span<const std::byte> buf, eagerness eager = eagerness::eager) noexcept;
-
-  private:
-    io::file_descriptor_handle _fd;
-};
-
 future<void> sleep_until(io::poll::timeout_clock::time_point time) noexcept
 {
   ////auto timeout = time - io::poll::timeout_clock::now();
@@ -134,103 +65,10 @@ future<void> sleep(io::poll::timeout_clock::duration time) noexcept
   return sleep_until(time + io::poll::timeout_clock::now());
 }
 
-inline future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf, eagerness eager) noexcept
-{
-  const auto fd = handle();
-  ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::read_some", fd, buf.size());
-
-  if (eager == eagerness::eager)
-  {
-    if (auto rv = io::read_some(fd, buf);
-        rv || rv.error() != io::error::operation_not_ready)
-      co_return rv;
-  }
-
-  co_return (
-      co_await io::poll(fd, io::poll_event::read)
-    ).and_then([=] { return io::read_some(fd, buf); });
-}
-
-inline future<std::span<const std::byte>> file_descriptor::write_some(std::span<const std::byte> buf, eagerness eager) noexcept
-{
-  const auto fd = handle();
-  ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::write_some", fd, buf.size());
-
-  if (eager == eagerness::eager)
-  {
-    if (auto rv = io::write_some(fd, buf);
-        rv || rv.error() != io::error::operation_not_ready)
-      co_return rv;
-  }
-
-  co_return (
-      co_await io::poll(fd, io::poll_event::write)
-    ).and_then([=] { return io::write_some(fd, buf); });
-}
-
-inline future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> const buf, eagerness eager) noexcept
-{
-  const auto fd = handle();
-  ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::read", fd, buf.size());
-  std::size_t read_so_far = 0;
-
-  if (eager == eagerness::eager)
-  {
-    if (auto rv = io::read(fd, buf);
-        !rv && rv.error() != io::error::operation_not_ready)
-      co_return rv.error();
-    else if (rv)
-      read_so_far += *rv;
-  }
-
-  while (read_so_far < buf.size())
-  {
-    if (auto wait = co_await io::poll(fd, io::poll_event::read); !wait)
-      co_return wait.error();
-
-    if (auto rv = io::read(fd, buf.subspan(read_so_far)); !rv)
-      co_return rv.error();
-    else if (*rv == 0)
-      co_return buf.first(read_so_far);
-    else
-      read_so_far += *rv;
-  }
-
-  co_return buf;
-}
-
-inline future<void> file_descriptor::write(std::span<const std::byte> buf, eagerness eager) noexcept
-{
-  const auto fd = handle();
-  ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(fd={}, buf=<size={}>)\n", ts(), __LINE__, "file_descriptor::write", fd, buf.size());
-
-  if (eager == eagerness::eager)
-  {
-    if (auto rv = io::write_some(fd, buf);
-        !rv && rv.error() != io::error::operation_not_ready)
-      co_return rv;
-    else if (rv)
-      buf = *rv;
-  }
-
-  while (!buf.empty())
-  {
-    if (auto wait = co_await io::poll(fd, io::poll_event::write); !wait)
-      co_return wait;
-
-    if (auto rv = io::write_some(fd, buf); !rv)
-      co_return rv;
-    else
-      buf = *rv;
-  }
-
-  co_return {};
-}
-
-class socket_descriptor : public file_descriptor
+class socket_descriptor : public io::file_descriptor
 {
   public:
-    using file_descriptor::file_descriptor;
+    using io::file_descriptor::file_descriptor;
 };
 
 class stream_socket : public socket_descriptor
