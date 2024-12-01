@@ -3,21 +3,27 @@
 #pragma once
 
 #include <type_traits>
-#include <utility>
 
 namespace olifilo::io::detail
 {
 template <typename T>
-concept Enum = std::is_enum<T>::value;
+concept SockOptEnumBase =
+    std::is_enum<T>::value
+ && std::is_same_v<std::underlying_type_t<T>, int>;
 
-template <Enum Level>
+template <SockOptEnumBase Level>
 struct socket_opt_level {};
 
-template <Enum auto Opt>
+template <typename T>
+concept SockOptEnum =
+    SockOptEnumBase<T>
+ && std::is_same_v<std::remove_cvref_t<decltype(socket_opt_level<T>::level)>, int>;
+
+template <SockOptEnum auto Opt>
 struct socket_opt
 {
   static constexpr auto level = socket_opt_level<decltype(Opt)>::level;
-  static constexpr auto name = std::to_underlying(Opt);
+  static constexpr auto name = static_cast<int>(Opt);
   // Defaulting to 'int' because almost every option is an int
   using type = int;
   using return_type = type;

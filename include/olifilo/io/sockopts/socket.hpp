@@ -3,7 +3,6 @@
 #pragma once
 
 #include <system_error>
-#include <utility>
 
 #include <sys/socket.h>
 
@@ -36,7 +35,7 @@ template <>
 struct socket_opt<sol_socket::error>
 {
   static constexpr auto level = socket_opt_level<sol_socket>::level;
-  static constexpr int name = std::to_underlying(sol_socket::error);
+  static constexpr int name = static_cast<int>(sol_socket::error);
   using type = int;
   using return_type = std::error_code;
 
@@ -50,7 +49,7 @@ template <>
 struct socket_opt<sol_socket::linger>
 {
   static constexpr auto level = socket_opt_level<sol_socket>::level;
-  static constexpr auto name = std::to_underlying(sol_socket::linger);
+  static constexpr auto name = static_cast<int>(sol_socket::linger);
   using type = struct ::linger;
   using return_type = type;
 };

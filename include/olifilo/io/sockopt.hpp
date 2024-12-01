@@ -32,7 +32,7 @@ inline expected<void> setsockopt(file_descriptor_handle fd, int level, int optna
     return {};
 }
 
-template <detail::Enum auto optname>
+template <detail::SockOptEnum auto optname>
 expected<typename detail::socket_opt<optname>::return_type> getsockopt(file_descriptor_handle fd) noexcept
 {
   using opt = detail::socket_opt<optname>;
@@ -49,7 +49,7 @@ expected<typename detail::socket_opt<optname>::return_type> getsockopt(file_desc
     return opt::transform(std::move(optval));
 }
 
-template <detail::Enum auto optname>
+template <detail::SockOptEnum auto optname>
 expected<void> setsockopt(file_descriptor_handle fd, typename detail::socket_opt<optname>::return_type const val) noexcept
 {
   using opt = detail::socket_opt<optname>;
