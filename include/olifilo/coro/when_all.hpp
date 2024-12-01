@@ -29,7 +29,7 @@ struct when_all_t
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
-    (my_promise.await_transform(std::move(futures)), ...);
+    ((futures = my_promise.await_transform(std::move(futures))), ...);
 
     // Now allow this future's .get() to handle the actual I/O multiplexing
     co_return std::tuple<expected<Ts>...>((co_await futures)...);
@@ -45,6 +45,8 @@ struct when_all_t
     std::vector<typename std::iterator_traits<I>::value_type::value_type> rv;
 
     auto& my_promise = co_await my_current_promise();
+    assert(my_promise.events.empty());
+    assert(my_promise.root_caller == &my_promise);
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     std::size_t count = 0;
