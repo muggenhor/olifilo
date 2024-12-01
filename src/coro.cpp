@@ -7,6 +7,7 @@
 #include <olifilo/io/poll.hpp>
 #include <olifilo/io/read.hpp>
 #include <olifilo/io/shutdown.hpp>
+#include <olifilo/io/select.hpp>
 #include <olifilo/io/socket.hpp>
 #include <olifilo/io/sockopt.hpp>
 #include <olifilo/io/sockopts/socket.hpp>
@@ -38,7 +39,6 @@
 #include <utility>
 
 #include <arpa/inet.h>
-#include <sys/select.h>
 #include <unistd.h>
 
 template<class... Ts>
@@ -46,24 +46,6 @@ struct overloaded : Ts... { using Ts::operator()...; };
 
 namespace olifilo
 {
-// expected<T, std::error_code> wrappers for I/O syscalls
-namespace io
-{
-expected<unsigned> select(unsigned nfds, ::fd_set* readfds, ::fd_set* writefds, ::fd_set* exceptfds, struct ::timeval* timeout = nullptr) noexcept
-{
-  if (nfds > static_cast<unsigned>(std::numeric_limits<int>::max()))
-    return std::make_error_code(std::errc::invalid_argument);
-
-  if (nfds > FD_SETSIZE)
-    return std::make_error_code(std::errc::bad_file_descriptor);
-
-  if (auto rv = ::select(static_cast<int>(nfds), readfds, writefds, exceptfds, timeout); rv < 0)
-    return std::error_code(errno, std::system_category());
-  else
-    return rv;
-}
-}  // namespace io
-
 template <typename T>
 class future;
 
@@ -252,26 +234,7 @@ class io_poll_context
         }
       }
 
-      struct ::timeval tv;
-      const auto tvp = [&]() -> decltype(&tv) {
-        if (!timeout)
-          return nullptr;
-        const auto now = std::decay_t<decltype(*timeout)>::clock::now();
-        if (*timeout < now)
-        {
-          tv.tv_sec = 0;
-          tv.tv_usec = 0;
-        }
-        else
-        {
-          const auto time_left = std::chrono::duration_cast<std::chrono::microseconds>(*timeout - now);
-          tv.tv_sec = time_left.count() / 1000000L;
-          tv.tv_usec = time_left.count() % 1000000L;
-        }
-        return &tv;
-      }();
-
-      if (const auto r = io::select(nfds, nfds ? &readfds : nullptr, nfds ? &writefds : nullptr, nfds ? &exceptfds : nullptr, tvp); !r)
+      if (const auto r = io::select(nfds, nfds ? &readfds : nullptr, nfds ? &writefds : nullptr, nfds ? &exceptfds : nullptr, timeout); !r)
       {
         return r.error();
       }
