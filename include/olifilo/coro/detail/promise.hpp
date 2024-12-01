@@ -22,11 +22,7 @@ class my_current_promise
     my_current_promise() = default;
 
     // Only friends are allowed to know the promise they run in
-    template <typename... Ts>
-    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
-    template <std::forward_iterator I, std::sentinel_for<I> S>
-    requires(is_future_v<typename std::iterator_traits<I>::value_type>)
-    friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
+    friend when_all_t;
 };
 }
 
@@ -206,11 +202,7 @@ class promise : private detail::promise_wait_callgraph
     template <typename U>
     friend class promise;
     friend class future<T>;
-    template <typename... Ts>
-    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
-    template <std::forward_iterator I, std::sentinel_for<I> S>
-    requires(is_future_v<typename std::iterator_traits<I>::value_type>)
-    friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
+    friend when_all_t;
 
   private:
     std::optional<expected<T>> returned_value;

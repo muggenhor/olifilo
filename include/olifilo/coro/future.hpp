@@ -122,11 +122,6 @@ class future
   private:
     template <typename U>
     friend class detail::promise;
-    template <typename... Ts>
-    friend future<std::tuple<expected<Ts>...>> when_all(future<Ts>... futures) noexcept;
-    template <std::forward_iterator I, std::sentinel_for<I> S>
-    requires(is_future_v<typename std::iterator_traits<I>::value_type>)
-    friend future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> when_all(I first, S last) noexcept;
 
     constexpr future(std::coroutine_handle<detail::promise<T>> handle) noexcept
       : handle(handle)

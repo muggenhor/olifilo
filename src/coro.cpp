@@ -531,14 +531,14 @@ int main()
       !r)
     throw std::system_error(r.error());
 #else
-  if (auto [r1, r2, rs] = when_all(
+  if (auto [r1, r2, rs] = std::apply(when_all, std::tuple{
         do_mqtt(1)
       , do_mqtt(2)
       , when_all(std::array{
           do_mqtt(3),
           do_mqtt(4),
         })
-      ).get().value();
+      }).get().value();
       !r1 || !r2 || !rs)
   {
     throw std::system_error(!r1 ? r1.error() : !r2 ? r2.error() : rs.error());
