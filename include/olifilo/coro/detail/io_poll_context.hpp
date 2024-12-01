@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include <deque>
 #include <iterator>
 #include <ranges>
 #include <type_traits>
@@ -27,7 +26,9 @@ class io_poll_context
       using std::ranges::begin;
       using std::ranges::end;
       using std::ranges::empty;
+      using std::ranges::size;
       using std::ranges::iter_swap;
+      using std::distance;
 
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("run_one"));
@@ -35,7 +36,6 @@ class io_poll_context
       if (empty(polled_events))
         return {};
 
-      std::deque<std::coroutine_handle<>> to_resume;
       fd_set readfds, writefds, exceptfds;
       FD_ZERO(&readfds);
       FD_ZERO(&writefds);
@@ -45,11 +45,11 @@ class io_poll_context
 
       ////const auto now = std::decay_t<decltype(*timeout)>::clock::now();
       ////unsigned idx = 0;
-      auto to_erase = end(polled_events);
+      auto to_resume = end(polled_events);
       for (auto i = begin(polled_events),
-            next = (i != to_erase) ? std::next(i) : to_erase;
-          i != to_erase;
-          i = (next != to_erase) ? next++ : next)
+            next = (i != to_resume) ? std::next(i) : to_resume;
+          i != to_resume;
+          i = (next != to_resume) ? next++ : next)
       {
         auto& handler = **i;
         ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx++, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
@@ -58,8 +58,7 @@ class io_poll_context
         {
           // Because we're using select() which has a very limited range of acceptable file descriptors (usually [0:1024))
           handler.wait_result = unexpected(std::make_error_code(std::errc::bad_file_descriptor));
-          to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
-          iter_swap(i, --to_erase);
+          iter_swap(i, --to_resume);
           next = i;
           continue;
         }
@@ -69,8 +68,7 @@ class io_poll_context
           if (*handler.timeout < std::decay_t<decltype(*handler.timeout)>::clock::now())
           {
             handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
-            to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
-            iter_swap(i, --to_erase);
+            iter_swap(i, --to_resume);
             next = i;
             continue;
           }
@@ -115,9 +113,9 @@ class io_poll_context
 
         ////idx = 0;
         for (auto i = begin(polled_events),
-              next = (i != to_erase) ? std::next(i) : to_erase;
-            i != to_erase;
-            i = (next != to_erase) ? next++ : next)
+              next = (i != to_resume) ? std::next(i) : to_resume;
+            i != to_resume;
+            i = (next != to_resume) ? next++ : next)
         {
           auto& handler = **i;
           ////idx++;
@@ -129,8 +127,7 @@ class io_poll_context
 
             ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
             handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
-            to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
-            iter_swap(i, --to_erase);
+            iter_swap(i, --to_resume);
             next = i;
             continue;
           }
@@ -145,19 +142,34 @@ class io_poll_context
 
           ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
           handler.wait_result.emplace(); // no polling error (may be an error event but that's for checking downstream)
-          to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
-          iter_swap(i, --to_erase);
+          iter_swap(i, --to_resume);
           next = i;
         }
-        polled_events.erase(to_erase, end(polled_events));
       }
 
-      ////idx = 0;
-      for (auto& waiter: to_resume)
+      // Assume that we're the only piece of code *removing* events from the polled_events range.
+      // And that every other piece of code pushes to the *back*.
+      // Keep indexes instead of iterators because iterators may be invalidated by the event handler queueing a new event.
+
+      // Call handlers from back to front because we've moved the ones ready first to the back
+      const auto first_resume = std::distance(begin(polled_events), to_resume);
+      auto resume_count = std::distance(to_resume, end(polled_events));
+      for (auto i = resume_count; i != 0; --i)
       {
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, idx++, waiter.address());
+        auto waiter = std::exchange((*std::next(begin(polled_events), first_resume + i - 1))->waiter, nullptr);
+        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i, waiter.address());
+        if constexpr (std::ranges::random_access_range<std::remove_cvref_t<R>>)
+        {
+          // pop from the back if we're at the range's back, hopefully reducing the amount of moves necessary later on
+          if (size(polled_events) == static_cast<std::size_t>(first_resume + resume_count))
+            polled_events.erase(std::next(begin(polled_events), first_resume + --resume_count), end(polled_events));
+        }
         waiter.resume();
       }
+
+      // Perform a single sub-ranged erase at the end to have O(n) instead of (n log n)
+      to_resume = std::next(begin(polled_events), first_resume);
+      polled_events.erase(to_resume, std::next(to_resume, resume_count));
 
       return {};
     }
