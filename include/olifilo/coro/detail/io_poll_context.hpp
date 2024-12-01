@@ -30,33 +30,17 @@ class io_poll_context
       {
         event->wait_result = unexpected(std::make_error_code(std::errc::operation_canceled));
         // Don't know if this is necessary. But hopefully better than leaving them dangling or calling destroy()?
-        _to_resume.emplace_back(event->waiter);
+        // Not even sure if this is safe in case someone catches the exception this produces...
+        event->waiter();
       }
 
       _polled_events = std::move(rhs._polled_events);
-      _to_resume.insert(_to_resume.end(), begin(rhs._to_resume), end(rhs._to_resume));
-      rhs._to_resume.clear();
 
       return *this;
     }
 
     void wait_for(awaitable_poll& event)
     {
-      if (event.fd < 0 && event.fd >= FD_SETSIZE && !event.timeout)
-      {
-        // Because we're using select() which has a very limited range of acceptable file descriptors (usually [0:1024))
-        event.wait_result = unexpected(std::make_error_code(std::errc::bad_file_descriptor));
-        _to_resume.emplace_back(event.waiter);
-        return;
-      }
-
-      if (event.timeout && *event.timeout < std::decay_t<decltype(*event.timeout)>::clock::now())
-      {
-        event.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
-        _to_resume.emplace_back(event.waiter);
-        return;
-      }
-
       _polled_events.emplace(event.fd, &event);
     }
 
@@ -65,18 +49,10 @@ class io_poll_context
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("run_one"));
 
-      ////unsigned i = 0;
-      while (!_to_resume.empty())
-      {
-        auto waiter = _to_resume.front();
-        _to_resume.pop_front();
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i++, waiter.address());
-        waiter.resume();
-      }
-
       if (_polled_events.empty())
         return {};
 
+      std::deque<std::coroutine_handle<>> to_resume;
       fd_set readfds, writefds, exceptfds;
       FD_ZERO(&readfds);
       FD_ZERO(&writefds);
@@ -85,52 +61,77 @@ class io_poll_context
       decltype(_polled_events.begin()->second->timeout) timeout;
 
       ////const auto now = std::decay_t<decltype(*timeout)>::clock::now();
-      ////i = 0;
-      for (const auto& [fd, handler] : _polled_events)
+      ////unsigned idx = 0;
+      for (auto i = _polled_events.begin(),
+            last = _polled_events.end(),
+            next = (i != last) ? std::next(i) : last;
+          i != last;
+          i = (next != last) ? next++ : next)
       {
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, static_cast<const void*>(handler), handler->events, handler->fd, handler->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler->waiter.address());
+        const auto fd = i->first;
+        auto& handler = *i->second;
+        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx++, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
 
-        if (handler->timeout)
+        if (handler.fd < 0 && handler.fd >= FD_SETSIZE && !handler.timeout)
         {
+          // Because we're using select() which has a very limited range of acceptable file descriptors (usually [0:1024))
+          handler.wait_result = unexpected(std::make_error_code(std::errc::bad_file_descriptor));
+          to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
+          _polled_events.erase(i);
+          continue;
+        }
+
+        if (handler.timeout)
+        {
+          if (*handler.timeout < std::decay_t<decltype(*handler.timeout)>::clock::now())
+          {
+            handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
+            to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
+            _polled_events.erase(i);
+            continue;
+          }
+
           if (timeout)
-            timeout = std::min(*timeout, *handler->timeout);
+            timeout = std::min(*timeout, *handler.timeout);
           else
-            timeout = *handler->timeout;
+            timeout = *handler.timeout;
         }
 
         if (!fd)
           continue;
 
         assert(fd < FD_SETSIZE);
-        if (std::to_underlying(handler->events & io::poll_event::read))
+        if (std::to_underlying(handler.events & io::poll_event::read))
         {
           FD_SET(fd, &readfds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
         }
-        if (std::to_underlying(handler->events & io::poll_event::write))
+        if (std::to_underlying(handler.events & io::poll_event::write))
         {
           FD_SET(fd, &writefds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
         }
-        if (std::to_underlying(handler->events & io::poll_event::priority))
+        if (std::to_underlying(handler.events & io::poll_event::priority))
         {
           FD_SET(fd, &exceptfds);
           nfds = std::max(nfds, static_cast<unsigned>(fd + 1));
         }
       }
 
-      if (const auto r = io::select(nfds, nfds ? &readfds : nullptr, nfds ? &writefds : nullptr, nfds ? &exceptfds : nullptr, timeout); !r)
+      if (nfds || timeout)
       {
-        return r.error();
-      }
-      else
-      {
+        bool timeout_occurred;
+        if (const auto r = io::select(nfds, nfds ? &readfds : nullptr, nfds ? &writefds : nullptr, nfds ? &exceptfds : nullptr, timeout); !r)
+          return r.error();
+        else
+          timeout_occurred = (*r == 0);
+
         const auto now = timeout
           ? std::decay_t<decltype(*timeout)>::clock::now()
           : std::decay_t<decltype(*timeout)>();
 
         const auto last = _polled_events.end();
-        unsigned idx = 0;
+        ////idx = 0;
         for (auto i = _polled_events.begin(),
               next = (i != last) ? std::next(i) : last;
             i != last;
@@ -138,16 +139,16 @@ class io_poll_context
         {
           const auto fd = i->first;
           auto& handler = *i->second;
-          idx++;
+          ////idx++;
 
-          if (*r == 0) // timeout occurred
+          if (timeout_occurred)
           {
             if (!handler.timeout || now < *handler.timeout)
               continue;
 
             ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
             handler.wait_result = unexpected(std::make_error_code(std::errc::timed_out));
-            _to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
+            to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
             _polled_events.erase(i);
 
             continue;
@@ -163,17 +164,15 @@ class io_poll_context
 
           ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
           handler.wait_result.emplace(); // no polling error (may be an error event but that's for checking downstream)
-          _to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
+          to_resume.emplace_back(std::exchange(handler.waiter, nullptr));
           _polled_events.erase(i);
         }
       }
 
-      ////i = 0;
-      while (!_to_resume.empty())
+      ////idx = 0;
+      for (auto& waiter: to_resume)
       {
-        auto waiter = std::move(_to_resume.front());
-        _to_resume.pop_front();
-        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i++, waiter.address());
+        ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, idx++, waiter.address());
         waiter.resume();
       }
 
@@ -193,11 +192,10 @@ class io_poll_context
 
     constexpr bool empty() const noexcept
     {
-      return _polled_events.empty() && _to_resume.empty();
+      return _polled_events.empty();
     }
 
   private:
     std::unordered_multimap<io::file_descriptor_handle, awaitable_poll*> _polled_events;
-    std::deque<std::coroutine_handle<>> _to_resume;
 };
 }  // namespace olifilo::detail
