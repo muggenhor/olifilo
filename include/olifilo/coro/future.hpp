@@ -61,31 +61,16 @@ class future
 
     expected<T> get() noexcept
     {
-      ////std::string_view func_name(__PRETTY_FUNCTION__);
-      ////func_name = func_name.substr(func_name.find("get"));
-
       assert(handle);
 
       auto& promise = handle.promise();
       detail::io_poll_context executor;
 
-      ////unsigned i = 0;
-
       while (!handle.done())
       {
-        ////unsigned j = 0;
+        assert(!promise.events.empty());
 
-        assert(!promise.events.empty() || !executor.empty());
-
-        ////const auto now = std::decay_t<decltype(*promise.events.front()->timeout)>::clock::now();
-        for (const auto event : promise.events)
-        {
-          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{},{}](root={}, events@{}, event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, i++, j++, handle.address(), static_cast<const void*>(&promise.events), static_cast<const void*>(event), event->events, event->fd, event->timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), event->waiter.address());
-          executor.wait_for(*event);
-        }
-        promise.events.clear();
-
-        if (auto err = executor.run_one(); err)
+        if (auto err = executor(promise.events); err)
           return unexpected(err);
       }
 
