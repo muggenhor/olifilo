@@ -32,6 +32,13 @@ struct socket_opt_level<sol_socket>
 };
 
 template <>
+struct socket_opt<sol_socket::keep_alive> : socket_opt_level<sol_socket>
+{
+  using type = int;
+  using return_type = bool;
+};
+
+template <>
 struct socket_opt<sol_socket::error>
 {
   using type = int;

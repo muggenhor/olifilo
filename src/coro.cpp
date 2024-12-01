@@ -971,6 +971,10 @@ class mqtt
       }
 
       con.keep_alive = decltype(con.keep_alive)(con.keep_alive.count() << (id & 1));
+      // TCP: start sending keep-alive probes after two keep-alive periods have expired without any packets received.
+      //      Killing the connection after sol_ip_tcp::keep_alive_count probes have failed to receive a reply.
+      olifilo::io::setsockopt<olifilo::io::sol_ip_tcp::keep_alive_idle>(con._sock.handle(), con.keep_alive * 2);
+      olifilo::io::setsockopt<olifilo::io::sol_socket::keep_alive>(con._sock.handle(), true);
 
       std::uint8_t connect_pkt[27];
       connect_pkt[0] = std::to_underlying(packet_t::connect) << 4;

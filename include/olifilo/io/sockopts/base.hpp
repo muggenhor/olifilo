@@ -26,4 +26,14 @@ struct socket_opt
   using type = int;
   using return_type = type;
 };
+
+template <typename T>
+concept has_transform_to_semantic =
+  std::is_same_v<typename T::return_type, decltype(T::transform(std::declval<typename T::type>()))>;
+;
+
+template <typename T>
+concept has_transform_to_native =
+  std::is_same_v<typename T::type, decltype(T::transform(std::declval<typename T::return_type>()))>;
+;
 }  // namespace olifilo::io::detail

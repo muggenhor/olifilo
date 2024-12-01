@@ -44,7 +44,8 @@ expected<typename detail::socket_opt<optname>::return_type> getsockopt(file_desc
   else if (rv->size() != sizeof(optval))
     return unexpected(std::make_error_code(std::errc::invalid_argument));
 
-  if constexpr (std::is_same_v<typename opt::type, typename opt::return_type>)
+  if constexpr (std::is_same_v<typename opt::type, typename opt::return_type>
+      || !detail::has_transform_to_semantic<opt>)
     return optval;
   else
     return opt::transform(std::move(optval));
@@ -55,11 +56,13 @@ expected<void> setsockopt(file_descriptor_handle fd, typename detail::socket_opt
 {
   constexpr int level = detail::socket_opt_level<decltype(optname)>::level;
   using opt = detail::socket_opt<optname>;
-  const std::conditional_t<
-      std::is_same_v<typename opt::type, typename opt::return_type>
-    , const typename opt::type&
-    , typename opt::type
-    > optval(val);
+  const typename opt::type& optval = [&val]() -> decltype(auto) {
+    if constexpr (std::is_same_v<typename opt::type, typename opt::return_type>
+        || !detail::has_transform_to_native<opt>)
+      return val;
+    else
+      return opt::transform(val);
+  }();
   return setsockopt(fd, level, static_cast<int>(optname), as_bytes(std::span(&optval, 1)));
 }
 }  // namespace olifilo::io
