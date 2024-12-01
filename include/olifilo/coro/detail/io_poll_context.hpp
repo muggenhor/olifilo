@@ -10,6 +10,8 @@
 #include <olifilo/io/select.hpp>
 #include <olifilo/io/types.hpp>
 
+#include "promise.hpp"
+
 namespace olifilo::detail
 {
 // used to register coroutines waiting for events and wait for all those events
@@ -38,7 +40,7 @@ class io_poll_context
       return *this;
     }
 
-    void wait_for(io::poll::awaitable& event)
+    void wait_for(awaitable_poll& event)
     {
       if (event.fd < 0 && event.fd >= FD_SETSIZE && !event.timeout)
       {
@@ -195,7 +197,7 @@ class io_poll_context
     }
 
   private:
-    std::unordered_multimap<io::file_descriptor_handle, io::poll::awaitable*> _polled_events;
+    std::unordered_multimap<io::file_descriptor_handle, awaitable_poll*> _polled_events;
     std::deque<std::coroutine_handle<>> _to_resume;
 };
 }  // namespace olifilo::detail

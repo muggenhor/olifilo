@@ -28,12 +28,14 @@ class my_current_promise
 
 namespace olifilo::detail
 {
+struct awaitable_poll;
+
 struct promise_wait_callgraph
 {
   promise_wait_callgraph* root_caller;
   std::deque<promise_wait_callgraph*> callees;
   std::coroutine_handle<> waits_on_me;
-  std::deque<io::poll::awaitable*> events;
+  std::deque<awaitable_poll*> events;
 
   constexpr promise_wait_callgraph() noexcept
     : root_caller(this)
@@ -49,10 +51,46 @@ struct promise_wait_callgraph
   promise_wait_callgraph& operator=(promise_wait_callgraph&&) = delete;
 };
 
-constexpr void push_back(std::coroutine_handle<promise_wait_callgraph> waiter, io::poll::awaitable& event) noexcept
+struct awaitable_poll : private io::poll
 {
-  waiter.promise().root_caller->events.push_back(&event);
-}
+  using poll::fd;
+  using poll::events;
+  using poll::timeout;
+
+  expected<void> wait_result;
+  std::coroutine_handle<detail::promise_wait_callgraph> waiter;
+
+  // We need the location/address of this struct to be stable, so prohibit copying.
+  // But we're still allowing the copy constructor to be callable (but *not* actually called!) by our factory function
+  constexpr awaitable_poll(awaitable_poll&& rhs) = delete;
+  awaitable_poll& operator=(const awaitable_poll&) = delete;
+
+  explicit constexpr awaitable_poll(const poll& event, std::coroutine_handle<detail::promise_wait_callgraph> waiter) noexcept
+    : poll(event)
+    , waiter(waiter)
+  {
+  }
+
+  constexpr bool await_ready() const noexcept
+  {
+    return false;
+  }
+
+  constexpr auto await_resume() const noexcept
+  {
+    return std::move(wait_result);
+  }
+
+  void await_suspend(std::coroutine_handle<> suspended) noexcept
+  {
+    assert(waiter == suspended && "await_transform called from different coroutine than await_suspend!");
+
+    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
+
+    // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
+    waiter.promise().root_caller->events.push_back(this);
+  }
+};
 
 struct suspend_always_to
 {
@@ -161,7 +199,7 @@ class promise : private detail::promise_wait_callgraph
       ////std::string_view func_name(__PRETTY_FUNCTION__);
       ////func_name = func_name.substr(func_name.find("await_transform"));
       ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*static_cast<promise*>(root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
-      return io::poll::awaitable(std::move(obj), std::coroutine_handle<detail::promise_wait_callgraph>::from_promise(*this));
+      return awaitable_poll(std::move(obj), std::coroutine_handle<detail::promise_wait_callgraph>::from_promise(*this));
     }
 
     struct promise_retriever
