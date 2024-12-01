@@ -367,7 +367,7 @@ class expected
     }
 
     template <typename... Args>
-      requires(std::is_same_v<T, void>
+      requires((std::is_same_v<T, void> && sizeof...(Args) == 0)
             || std::is_nothrow_constructible_v<T, Args...>)
     constexpr decltype(auto) emplace(Args&&... args)
       noexcept(std::is_same_v<T, void>
