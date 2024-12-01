@@ -8,6 +8,9 @@
 #include <olifilo/io/read.hpp>
 #include <olifilo/io/shutdown.hpp>
 #include <olifilo/io/socket.hpp>
+#include <olifilo/io/sockopt.hpp>
+#include <olifilo/io/sockopts/socket.hpp>
+#include <olifilo/io/sockopts/tcp.hpp>
 #include <olifilo/io/types.hpp>
 #include <olifilo/io/write.hpp>
 
@@ -35,8 +38,6 @@
 #include <utility>
 
 #include <arpa/inet.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
 #include <sys/select.h>
 #include <unistd.h>
 
@@ -60,134 +61,6 @@ expected<unsigned> select(unsigned nfds, ::fd_set* readfds, ::fd_set* writefds, 
     return std::error_code(errno, std::system_category());
   else
     return rv;
-}
-
-enum class sol_socket : int
-{
-  accept_connections = SO_ACCEPTCONN,
-  broadcast = SO_BROADCAST,
-  keep_alive = SO_KEEPALIVE,
-  reuse_addr = SO_REUSEADDR,
-  type = SO_TYPE, // RAW|STREAM|DGRAM
-  error = SO_ERROR,
-  receive_buffer_size = SO_RCVBUF,
-  send_buffer_size = SO_SNDBUF,
-  linger = SO_LINGER,
-};
-
-enum class sol_ip_tcp : int
-{
-  fastopen = TCP_FASTOPEN,
-  fastopen_connect = TCP_FASTOPEN_CONNECT,
-};
-
-namespace detail
-{
-template <typename T>
-concept Enum = std::is_enum<T>::value;
-
-template <Enum Level>
-struct socket_opt_level {};
-
-template <>
-struct socket_opt_level<sol_socket>
-{
-  static constexpr int level = SOL_SOCKET;
-};
-
-template <>
-struct socket_opt_level<sol_ip_tcp>
-{
-  static constexpr int level = IPPROTO_TCP;
-};
-
-template <Enum auto Opt>
-struct socket_opt
-{
-  static constexpr auto level = socket_opt_level<decltype(Opt)>::level;
-  static constexpr auto name = std::to_underlying(Opt);
-  // Defaulting to 'int' because almost every option is an int
-  using type = int;
-  using return_type = type;
-};
-
-template <>
-struct socket_opt<sol_socket::error>
-{
-  static constexpr auto level = socket_opt_level<sol_socket>::level;
-  static constexpr int name = std::to_underlying(sol_socket::error);
-  using type = int;
-  using return_type = std::error_code;
-
-  static constexpr return_type transform(type val) noexcept
-  {
-    return return_type(val, std::system_category());
-  }
-};
-
-template <>
-struct socket_opt<sol_socket::linger>
-{
-  static constexpr auto level = socket_opt_level<sol_socket>::level;
-  static constexpr auto name = std::to_underlying(sol_socket::linger);
-  using type = struct ::linger;
-  using return_type = type;
-};
-
-template <>
-struct socket_opt<sol_ip_tcp::fastopen_connect>
-{
-  static constexpr auto level = socket_opt_level<sol_ip_tcp>::level;
-  static constexpr auto name = std::to_underlying(sol_ip_tcp::fastopen_connect);
-  using type = int;
-  using return_type = bool;
-};
-}  // namespace detail
-
-expected<std::span<std::byte>> getsockopt(file_descriptor_handle fd, int level, int optname, std::span<std::byte> optval) noexcept
-{
-  ::socklen_t optlen = optval.size_bytes();
-  if (auto rv = ::getsockopt(fd, level, optname, optval.data(), &optlen); rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return optval.first(optlen);
-}
-
-template <detail::Enum auto optname>
-expected<typename detail::socket_opt<optname>::return_type> getsockopt(file_descriptor_handle fd) noexcept
-{
-  using opt = detail::socket_opt<optname>;
-  typename opt::type optval;
-  if (auto rv = getsockopt(fd, opt::level, opt::name, as_writable_bytes(std::span(&optval, 1)));
-      !rv)
-    return unexpected(rv.error());
-  else if (rv->size() != sizeof(optval))
-    return unexpected(std::make_error_code(std::errc::invalid_argument));
-
-  if constexpr (std::is_same_v<typename opt::type, typename opt::return_type>)
-    return optval;
-  else
-    return opt::transform(std::move(optval));
-}
-
-expected<void> setsockopt(file_descriptor_handle fd, int level, int optname, std::span<const std::byte> optval) noexcept
-{
-  if (auto rv = ::setsockopt(fd, level, optname, optval.data(), optval.size_bytes()); rv == -1)
-    return std::error_code(errno, std::system_category());
-  else
-    return {};
-}
-
-template <detail::Enum auto optname>
-expected<void> setsockopt(file_descriptor_handle fd, typename detail::socket_opt<optname>::return_type const val) noexcept
-{
-  using opt = detail::socket_opt<optname>;
-  const std::conditional_t<
-      std::is_same_v<typename opt::type, typename opt::return_type>
-    , const typename opt::type&
-    , typename opt::type
-    > optval(val);
-  return setsockopt(fd, opt::level, opt::name, as_bytes(std::span(&optval, 1)));
 }
 }  // namespace io
 
