@@ -54,38 +54,28 @@ constexpr void push_back(std::coroutine_handle<promise_wait_callgraph> waiter, i
   waiter.promise().root_caller->events.push_back(&event);
 }
 
+struct suspend_always_to
+{
+  std::coroutine_handle<> waiter;
+
+  constexpr bool await_ready() const noexcept { return false; }
+  constexpr void await_resume() const noexcept { }
+
+  constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended [[maybe_unused]]) noexcept
+  {
+    if (!waiter)
+      return std::noop_coroutine();
+    return std::exchange(waiter, nullptr);
+  }
+};
+
 template <typename T>
 class promise : private detail::promise_wait_callgraph
 {
   public:
     future<T> get_return_object() { return future<T>(std::coroutine_handle<promise>::from_promise(*this)); }
     constexpr std::suspend_never initial_suspend() noexcept { return {}; }
-    struct final_resume_waiter
-    {
-      std::coroutine_handle<> waiter;
-
-      constexpr bool await_ready() const noexcept
-      {
-        return false;
-      }
-
-      constexpr void await_resume() const noexcept
-      {
-      }
-
-      constexpr std::coroutine_handle<> await_suspend(std::coroutine_handle<> suspended [[maybe_unused]]) noexcept
-      {
-        return std::exchange(waiter, nullptr);
-      }
-    };
-
-    constexpr final_resume_waiter final_suspend() noexcept
-    {
-      auto waiter = std::exchange(waits_on_me, nullptr);
-      if (!waiter)
-        waiter = std::noop_coroutine();
-      return {waiter};
-    }
+    constexpr suspend_always_to final_suspend() noexcept { return {std::exchange(waits_on_me, nullptr)}; }
 
     constexpr void unhandled_exception() noexcept
     {
