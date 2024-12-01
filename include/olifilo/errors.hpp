@@ -4,23 +4,23 @@
 
 #include <system_error>
 
-namespace olifilo::io
+namespace olifilo
 {
-enum class error
+enum class condition
 {
   operation_not_ready = 1,
 };
 
-struct error_category_t : std::error_category
+struct condition_category_t : std::error_category
 {
   const char* name() const noexcept override;
   std::string message(int ev) const override;
 
   constexpr bool equivalent(const std::error_code& ec, int cond) const noexcept override
   {
-    switch (static_cast<error>(cond))
+    switch (static_cast<condition>(cond))
     {
-      case error::operation_not_ready:
+      case condition::operation_not_ready:
         if (ec.category() != std::system_category()
          && ec.category() != std::generic_category())
           return false;
@@ -35,17 +35,17 @@ struct error_category_t : std::error_category
   }
 };
 
-constexpr const error_category_t& error_category() noexcept
+constexpr const condition_category_t& condition_category() noexcept
 {
-  static error_category_t cat;
+  static condition_category_t cat;
   return cat;
 }
 
-inline std::error_condition make_error_condition(error e)
+inline std::error_condition make_error_condition(condition e)
 {
-  return {static_cast<int>(e), error_category()};
+  return {static_cast<int>(e), condition_category()};
 }
-}  // namespace olifilo::io
+}  // namespace olifilo
 
 template <>
-struct std::is_error_condition_enum<olifilo::io::error> : true_type {};
+struct std::is_error_condition_enum<olifilo::condition> : true_type {};

@@ -40,8 +40,8 @@ set_target_properties(
 
 target_sources(${PROJECT_NAME}
   PRIVATE
+    src/errors.cpp
     src/io/file_descriptor.cpp
-    src/io/errors.cpp
 )
 
 target_sources(${PROJECT_NAME}
@@ -57,8 +57,8 @@ target_sources(${PROJECT_NAME}
       include/olifilo/coro/io/file_descriptor.hpp
       include/olifilo/coro/io/types.hpp
       include/olifilo/coro/when_all.hpp
+      include/olifilo/errors.hpp
       include/olifilo/io/connect.hpp
-      include/olifilo/io/errors.hpp
       include/olifilo/io/fcntl.hpp
       include/olifilo/io/poll.hpp
       include/olifilo/io/read.hpp

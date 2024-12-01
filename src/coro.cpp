@@ -3,9 +3,9 @@
 #include <olifilo/coro/future.hpp>
 #include <olifilo/coro/io/file_descriptor.hpp>
 #include <olifilo/coro/when_all.hpp>
+#include <olifilo/errors.hpp>
 #include <olifilo/expected.hpp>
 #include <olifilo/io/connect.hpp>
-#include <olifilo/io/errors.hpp>
 #include <olifilo/io/fcntl.hpp>
 #include <olifilo/io/poll.hpp>
 #include <olifilo/io/read.hpp>
@@ -108,7 +108,7 @@ class stream_socket : public socket_descriptor
       const auto fd = handle();
 
       if (auto rv = io::connect(fd, addr, addrlen);
-          rv || rv.error() != io::error::operation_not_ready)
+          rv || rv.error() != condition::operation_not_ready)
         co_return rv;
 
       if (auto wait = co_await io::poll(handle(), io::poll_event::write); !wait)

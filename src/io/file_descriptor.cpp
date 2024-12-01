@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <olifilo/coro/io/file_descriptor.hpp>
-#include <olifilo/io/errors.hpp>
+#include <olifilo/errors.hpp>
 #include <olifilo/io/read.hpp>
 #include <olifilo/io/write.hpp>
 
@@ -15,7 +15,7 @@ future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf
   if (eager == eagerness::eager)
   {
     if (auto rv = io::read_some(fd, buf);
-        rv || rv.error() != io::error::operation_not_ready)
+        rv || rv.error() != condition::operation_not_ready)
       co_return rv;
   }
 
@@ -32,7 +32,7 @@ future<std::span<const std::byte>> file_descriptor::write_some(std::span<const s
   if (eager == eagerness::eager)
   {
     if (auto rv = io::write_some(fd, buf);
-        rv || rv.error() != io::error::operation_not_ready)
+        rv || rv.error() != condition::operation_not_ready)
       co_return rv;
   }
 
@@ -50,7 +50,7 @@ future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> const bu
   if (eager == eagerness::eager)
   {
     if (auto rv = io::read(fd, buf);
-        !rv && rv.error() != io::error::operation_not_ready)
+        !rv && rv.error() != condition::operation_not_ready)
       co_return rv.error();
     else if (rv)
       read_so_far += *rv;
@@ -80,7 +80,7 @@ future<void> file_descriptor::write(std::span<const std::byte> buf, eagerness ea
   if (eager == eagerness::eager)
   {
     if (auto rv = io::write_some(fd, buf);
-        !rv && rv.error() != io::error::operation_not_ready)
+        !rv && rv.error() != condition::operation_not_ready)
       co_return rv;
     else if (rv)
       buf = *rv;
