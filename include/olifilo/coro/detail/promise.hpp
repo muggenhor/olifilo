@@ -5,13 +5,13 @@
 #include <algorithm>
 #include <coroutine>
 #include <deque>
-#include <optional>
 #include <system_error>
 #include <utility>
 
 #include "forward.hpp"
 
 #include <olifilo/expected.hpp>
+#include <olifilo/errors.hpp>
 #include <olifilo/io/poll.hpp>
 
 namespace olifilo
@@ -57,7 +57,7 @@ struct awaitable_poll : private io::poll
   using poll::events;
   using poll::timeout;
 
-  expected<void> wait_result;
+  expected<void> wait_result = {unexpect, error::uninitialized};
   std::coroutine_handle<detail::promise_wait_callgraph> waiter;
 
   // We need the location/address of this struct to be stable, so prohibit copying.
@@ -238,6 +238,6 @@ class promise : private detail::promise_wait_callgraph
     friend when_all_t;
 
   private:
-    std::optional<expected<T>> returned_value;
+    expected<T> returned_value = {unexpect, error::broken_promise};
 };
 }  // namespace olifilo::detail

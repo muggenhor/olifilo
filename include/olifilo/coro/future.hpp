@@ -74,8 +74,7 @@ class future
           return unexpected(err);
       }
 
-      assert(promise.returned_value);
-      expected<T> rv(std::move(*promise.returned_value));
+      expected<T> rv(std::move(promise.returned_value));
       destroy();
       return rv;
     }
@@ -98,8 +97,7 @@ class future
       assert(handle.done());
       auto& promise = handle.promise();
 
-      assert(promise.returned_value);
-      expected<T> rv(std::move(*promise.returned_value));
+      expected<T> rv(std::move(promise.returned_value));
 
       // Simple cancellation implementation that'll propagate through the coroutine stack.
       // It's caught by unhandled_exception and stored again as error_code there
