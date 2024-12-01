@@ -31,8 +31,6 @@ struct socket_opt_level<sol_ip_tcp>
 template <>
 struct socket_opt<sol_ip_tcp::fastopen_connect>
 {
-  static constexpr auto level = socket_opt_level<sol_ip_tcp>::level;
-  static constexpr auto name = static_cast<int>(sol_ip_tcp::fastopen_connect);
   using type = int;
   using return_type = bool;
 };
