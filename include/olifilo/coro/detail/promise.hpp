@@ -130,11 +130,11 @@ class promise : private detail::promise_wait_callgraph
         }
         catch (std::bad_expected_access<std::error_code>& exc)
         {
-          returned_value = exc.error();
+          returned_value = {unexpect, exc.error()};
         }
         catch (std::system_error& exc)
         {
-          returned_value = exc.code();
+          returned_value = {unexpect, exc.code()};
         }
       }
       else
