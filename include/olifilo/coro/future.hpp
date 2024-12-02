@@ -59,26 +59,6 @@ class future
       }
     }
 
-    expected<T> get() noexcept
-    {
-      assert(handle);
-
-      auto& promise = handle.promise();
-      detail::io_poll_context executor;
-
-      while (!handle.done())
-      {
-        assert(!promise.events.empty());
-
-        if (auto err = executor(promise.events); err)
-          return unexpected(err);
-      }
-
-      expected<T> rv(std::move(promise.returned_value));
-      destroy();
-      return rv;
-    }
-
     constexpr bool await_ready() const noexcept
     {
       return !handle || handle.done();
@@ -91,21 +71,45 @@ class future
       promise.waits_on_me = suspended;
     }
 
-    constexpr expected<T> await_resume()
+    constexpr expected<T> await_resume(std::nothrow_t) noexcept
     {
       assert(handle);
       assert(handle.done());
       auto& promise = handle.promise();
 
       expected<T> rv(std::move(promise.returned_value));
+      destroy();
+      return rv;
+    }
+
+    constexpr expected<T> await_resume()
+    {
+      auto rv = await_resume(std::nothrow);
 
       // Simple cancellation implementation that'll propagate through the coroutine stack.
       // It's caught by unhandled_exception and stored again as error_code there
       if (!rv && rv.error() == std::errc::operation_canceled)
         throw std::system_error(rv.error());
 
-      destroy();
       return rv;
+    }
+
+    expected<T> get() noexcept
+    {
+      assert(handle);
+
+      auto& promise = handle.promise();
+      detail::io_poll_context executor;
+
+      while (!handle.done())
+      {
+        assert(!promise.events.empty());
+
+        if (auto err = executor(promise.events); err)
+          return {unexpect, err};
+      }
+
+      return await_resume(std::nothrow);
     }
 
   private:
