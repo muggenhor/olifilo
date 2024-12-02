@@ -11,6 +11,7 @@ enum class error
   uninitialized = 1,
   broken_promise,
   future_already_retrieved,
+  no_io_pending,
 };
 
 enum class condition

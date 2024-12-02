@@ -29,19 +29,19 @@ struct awaitable_poll;
 
 struct promise_wait_callgraph
 {
-  promise_wait_callgraph* root_caller;
+  promise_wait_callgraph* caller;
   std::deque<promise_wait_callgraph*> callees;
   std::coroutine_handle<> waits_on_me;
   std::deque<awaitable_poll*> events;
 
   constexpr promise_wait_callgraph() noexcept
-    : root_caller(this)
+    : caller(this)
   {
   }
 
   ~promise_wait_callgraph()
   {
-    std::erase(root_caller->callees, this);
+    std::erase(caller->callees, this);
   }
 
   promise_wait_callgraph(promise_wait_callgraph&&) = delete;
@@ -90,7 +90,7 @@ struct awaitable_poll : private io::poll
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
-    waiter.promise().root_caller->events.push_back(this);
+    waiter.promise().events.push_back(this);
   }
 };
 
@@ -149,43 +149,16 @@ class promise : private detail::promise_wait_callgraph
     template <typename U>
     constexpr future<U>&& await_transform(future<U>&& fut) noexcept
     {
-      ////std::string_view func_name(__PRETTY_FUNCTION__);
-      ////func_name = func_name.substr(func_name.find("await_transform"));
-
       if (detail::promise_wait_callgraph* const callee_promise = fut.handle ? &fut.handle.promise() : nullptr)
       {
-        if (std::ranges::find(callees, callee_promise) == callees.end())
-          callees.push_back(callee_promise);
+        assert(std::ranges::find(callees, callee_promise) == callees.end());
+        callees.push_back(callee_promise);
 
-        auto& events_queue = root_caller->events;
-
-        for (std::size_t i = 0; i < callees.size(); ++i)
+        for (auto* const child : callees)
         {
-          // Recurse into grand children
-          {
-            auto grand_children = std::move(callees[i]->callees);
-            callees.insert(callees.end(), begin(grand_children), end(grand_children));
-          }
-
-          const auto& child = callees[i];
-
-          child->root_caller = this;
-          ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](child={}, child->root={}\n", ts(), __LINE__, func_name, i, std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(child)).address(), std::coroutine_handle<promise>::from_promise(*reinterpret_cast<promise*>(child->root_caller)).address());
-
-          // Steal all events from all child futures
-          if (events_queue.empty())
-          {
-            events_queue = std::move(child->events);
-          }
-          else
-          {
-            // move entire container to ensure memory is recovered at scope exit
-            auto moved_events = std::move(child->events);
-            events_queue.insert(events_queue.end(), begin(moved_events), end(moved_events));
-          }
+          child->caller = this;
         }
       }
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*static_cast<promise*>(root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
       return std::move(fut);
     }
 
@@ -198,9 +171,6 @@ class promise : private detail::promise_wait_callgraph
 
     constexpr auto await_transform(io::poll&& obj) noexcept
     {
-      ////std::string_view func_name(__PRETTY_FUNCTION__);
-      ////func_name = func_name.substr(func_name.find("await_transform"));
-      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(root={}, me={})\n", ts(), __LINE__, func_name, std::coroutine_handle<promise>::from_promise(*static_cast<promise*>(root_caller)).address(), std::coroutine_handle<promise>::from_promise(*this).address());
       return awaitable_poll(std::move(obj), std::coroutine_handle<detail::promise_wait_callgraph>::from_promise(*this));
     }
 

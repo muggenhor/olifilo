@@ -106,9 +106,7 @@ class future
 
       while (!handle.done())
       {
-        assert(!promise.events.empty());
-
-        if (auto err = executor(promise.events); err)
+        if (auto err = executor(promise); err)
           return {unexpect, err};
       }
 

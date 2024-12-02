@@ -24,15 +24,13 @@ struct when_all_t
     ////func_name = func_name.substr(func_name.find("operator"));
 
     auto& my_promise = co_await detail::current_promise();
-    assert(my_promise.events.empty());
-    assert(my_promise.root_caller == &my_promise);
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
     ((futures = my_promise.await_transform(std::move(futures))), ...);
 
-    // Now allow this future's .get() to handle the actual I/O multiplexing
     expected<std::tuple<expected<Ts>...>>&& rv = std::move(my_promise.returned_value);
+    // Now allow this future's .get() to handle the actual I/O multiplexing
     rv.emplace((co_await futures)...);
     co_return rv;
   }
@@ -45,8 +43,6 @@ struct when_all_t
     ////func_name = func_name.substr(func_name.find("operator"));
 
     auto& my_promise = co_await detail::current_promise();
-    assert(my_promise.events.empty());
-    assert(my_promise.root_caller == &my_promise);
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     std::size_t count = 0;
@@ -73,5 +69,5 @@ struct when_all_t
   }
 };
 
-inline constexpr when_all_t when_all;
+inline constexpr when_all_t when_all [[maybe_unused]];
 }  // namespace olifilo
