@@ -17,6 +17,8 @@ std::string error_category_t::message(int ev) const
       return "uninitialized";
     case error::broken_promise:
       return "broken promise";
+    case error::future_already_retrieved:
+      return "future already retrieved";
   }
 
   return "(unrecognized error)";

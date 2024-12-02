@@ -73,7 +73,9 @@ class future
 
     constexpr expected<T> await_resume(std::nothrow_t) noexcept
     {
-      assert(handle);
+      if (!handle)
+        return {unexpect, make_error_code(error::future_already_retrieved)};
+
       assert(handle.done());
       auto& promise = handle.promise();
 
@@ -96,7 +98,8 @@ class future
 
     expected<T> get() noexcept
     {
-      assert(handle);
+      if (!handle)
+        return {unexpect, make_error_code(error::future_already_retrieved)};
 
       auto& promise = handle.promise();
       detail::io_poll_context executor;

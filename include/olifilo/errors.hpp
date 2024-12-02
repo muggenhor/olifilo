@@ -10,6 +10,7 @@ enum class error
 {
   uninitialized = 1,
   broken_promise,
+  future_already_retrieved,
 };
 
 enum class condition
