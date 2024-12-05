@@ -17,7 +17,10 @@ namespace olifilo::io
 {
 inline expected<std::span<std::byte>> getsockopt(file_descriptor_handle fd, int level, int optname, std::span<std::byte> optval) noexcept
 {
-  ::socklen_t optlen = optval.size_bytes();
+  if (optval.size_bytes() > static_cast<std::size_t>(std::numeric_limits<::socklen_t>::max()))
+    return make_error_code(std::errc::argument_out_of_domain);
+
+  auto optlen = static_cast<::socklen_t>(optval.size_bytes());
   if (auto rv = ::getsockopt(fd, level, optname, optval.data(), &optlen); rv == -1)
     return {unexpect, errno, std::system_category()};
   else
@@ -26,7 +29,10 @@ inline expected<std::span<std::byte>> getsockopt(file_descriptor_handle fd, int 
 
 inline expected<void> setsockopt(file_descriptor_handle fd, int level, int optname, std::span<const std::byte> optval) noexcept
 {
-  if (auto rv = ::setsockopt(fd, level, optname, optval.data(), optval.size_bytes()); rv == -1)
+  if (optval.size_bytes() > static_cast<std::size_t>(std::numeric_limits<::socklen_t>::max()))
+    return make_error_code(std::errc::argument_out_of_domain);
+
+  if (auto rv = ::setsockopt(fd, level, optname, optval.data(), static_cast<::socklen_t>(optval.size_bytes())); rv == -1)
     return {unexpect, errno, std::system_category()};
   else
     return {};

@@ -17,6 +17,16 @@ if(UNIX AND (
   add_compile_options(-fdiagnostics-color=always)
   add_link_options(-fdiagnostics-color=always)
 endif()
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  add_compile_options(
+    -Werror
+    -Wall
+    -Wextra
+    -Wconversion
+    -Wno-missing-field-initializers
+    -Wno-mismatched-new-delete
+)
+endif()
 #add_compile_options(
 #  -fsanitize=undefined,address
 #)

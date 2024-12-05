@@ -95,9 +95,12 @@ class stream_socket : public socket_descriptor
     {
       ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:.128}\n", ts(), __LINE__, "stream_socket::connect");
 
+      if (addrlen > static_cast<std::size_t>(std::numeric_limits<::socklen_t>::max()))
+        co_return make_error_code(std::errc::argument_out_of_domain);
+
       const auto fd = handle();
 
-      if (auto rv = io::connect(fd, addr, addrlen);
+      if (auto rv = io::connect(fd, addr, static_cast<::socklen_t>(addrlen));
           rv || rv.error() != condition::operation_not_ready)
         co_return rv;
 
@@ -206,8 +209,8 @@ class mqtt
       connect_pkt[9] = 0x02 /* want clean session */;
 
       // keep alive (seconds, 16 bit big endian)
-      connect_pkt[10] = con.keep_alive.count() >> 8;
-      connect_pkt[11] = con.keep_alive.count() & 0xff;
+      connect_pkt[10] = static_cast<std::uint8_t>(con.keep_alive.count() >> 8);
+      connect_pkt[11] = static_cast<std::uint8_t>(con.keep_alive.count());
 
       // client ID
       connect_pkt[12] = 0;
@@ -258,7 +261,7 @@ class mqtt
 
     olifilo::future<void> disconnect() noexcept
     {
-      char disconnect_pkt[2];
+      std::uint8_t disconnect_pkt[2];
       disconnect_pkt[0] = std::to_underlying(packet_t::disconnect) << 4;
       disconnect_pkt[1] = 0;
 
@@ -282,7 +285,7 @@ class mqtt
 
     olifilo::future<void> ping() noexcept
     {
-      char ping_pkt[2];
+      std::uint8_t ping_pkt[2];
       ping_pkt[0] = std::to_underlying(packet_t::pingreq) << 4;
       ping_pkt[1] = 0;
 
