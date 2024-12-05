@@ -48,7 +48,8 @@ class io_poll_context
         mark_events(polled, readfds, writefds, exceptfds, timeout);
       }
 
-      dispatch_events(polled);
+      while (dispatch_events(polled))
+        ;
 
       return {};
     }
@@ -186,49 +187,41 @@ class io_poll_context
         mark_events(*callee, readfds, writefds, exceptfds, timeout);
     }
 
-    void dispatch_events(promise_wait_callgraph& polled) noexcept
+    bool dispatch_events(promise_wait_callgraph& polled) noexcept
     {
-      using std::ranges::begin;
-      using std::ranges::end;
-      using std::ranges::size;
-      using std::ranges::iter_swap;
+      using std::ranges::rbegin;
+      using std::ranges::rend;
+
+      //// FIXME: recursing into children who's event handlers may cause them to be destroyed!
+      //// Only the root node is safe from destruction (at worst it's waiting at its final suspend point)
+      //// So whenever we've executed any event handler we should restart recursion, somehow.
+      for (auto* const callee : polled.callees)
+      {
+        if (dispatch_events(*callee))
+          return true;
+      }
 
       // Assume that we're the only piece of code *removing* events from the polled.events range.
       // And that every other piece of code pushes to the *back*.
       // Keep indexes instead of iterators because iterators may be invalidated by the event handler queueing a new event.
 
       // Call handlers from back to front because we've moved the ones ready first to the back
-      constexpr auto ready_to_resume = [] (const auto* const handler) {
-        return handler->wait_result || handler->wait_result.error() != error::uninitialized;
-      };
-      constexpr auto not_ready_to_resume = [=] (const auto* const handler) {
-        return !ready_to_resume(handler);
-      };
-      auto to_resume = std::ranges::find_if(polled.events, ready_to_resume);
-      const auto first_resume = std::distance(begin(polled.events), to_resume);
-      auto resume_count = std::distance(
-          to_resume
-        , std::find_if(to_resume, end(polled.events), not_ready_to_resume)
-        );
-      for (auto i = resume_count; i != 0; --i)
+      for (auto i = rbegin(polled.events), last = rend(polled.events); i != last; ++i)
       {
-        auto waiter = std::exchange((*std::next(begin(polled.events), first_resume + i - 1))->waiter, nullptr);
+        assert(*i != nullptr);
+        auto& handler = **i;
+        if (handler.wait_result.error() == error::uninitialized)
+          continue;
+
+        auto waiter = std::exchange(handler.waiter, nullptr);
+        assert(waiter);
+        polled.events.erase(std::next(i).base());
         ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i, waiter.address());
-        if constexpr (std::ranges::random_access_range<std::remove_cvref_t<decltype(polled.events)>>)
-        {
-          // pop from the back if we're at the range's back, hopefully reducing the amount of moves necessary later on
-          if (size(polled.events) == static_cast<std::size_t>(first_resume + resume_count))
-            polled.events.erase(std::next(begin(polled.events), first_resume + --resume_count));
-        }
         waiter.resume();
+        return true;
       }
 
-      // Perform a single sub-ranged erase at the end to have O(n) instead of (n log n)
-      to_resume = std::next(begin(polled.events), first_resume);
-      polled.events.erase(to_resume, std::next(to_resume, resume_count));
-
-      for (auto* const callee : polled.callees)
-        dispatch_events(*callee);
+      return false;
     }
 };
 }  // namespace olifilo::detail
