@@ -50,6 +50,7 @@ set_target_properties(
 
 target_sources(${PROJECT_NAME}
   PRIVATE
+    src/coro/io_poll_context.cpp
     src/errors.cpp
     src/io/file_descriptor.cpp
 )

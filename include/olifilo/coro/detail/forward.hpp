@@ -22,6 +22,8 @@ struct when_all_t;
 
 namespace detail
 {
+struct promise_wait_callgraph;
+
 template <typename T>
 class promise;
 }  // namespace detail
