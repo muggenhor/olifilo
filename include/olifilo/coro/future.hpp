@@ -13,7 +13,7 @@
 namespace olifilo
 {
 template <typename T>
-class future
+class [[nodiscard("future not awaited")]] future
 {
   public:
     using value_type = expected<T>;
