@@ -55,16 +55,25 @@ struct awaitable_poll : private io::poll
   using poll::timeout;
 
   expected<void> wait_result = {unexpect, error::uninitialized};
-  std::coroutine_handle<detail::promise_wait_callgraph> waiter;
+  std::coroutine_handle<> waiter;
+  // Need to keep an explicit reference instead of
+  // std::coroutine_handle<T=detail::promise_wait_callgraph>::promise(). Because the
+  // promise()/from_promise() functions are incorrect (on GCC 14/Clang 18) when T (without cv
+  // qualifiers) isn't exactly equal to ::promise_type. Specifically the promise_wait_callgraph base
+  // class might have less strict alignment requirements than the deriving '::promise_type'.
+  // This would result in the pointer computation performed by ::promise() using a too small offset.
+  // So completely avoid using ::promise() in a type-erased context and just store a reference.
+  promise_wait_callgraph& promise;
 
   // We need the location/address of this struct to be stable, so prohibit copying.
   // But we're still allowing the copy constructor to be callable (but *not* actually called!) by our factory function
   constexpr awaitable_poll(awaitable_poll&& rhs) = delete;
   awaitable_poll& operator=(const awaitable_poll&) = delete;
 
-  explicit constexpr awaitable_poll(const poll& event, std::coroutine_handle<detail::promise_wait_callgraph> waiter) noexcept
+  explicit constexpr awaitable_poll(const poll& event, std::coroutine_handle<> waiter, detail::promise_wait_callgraph& promise) noexcept
     : poll(event)
     , waiter(waiter)
+    , promise(promise)
   {
   }
 
@@ -90,7 +99,7 @@ struct awaitable_poll : private io::poll
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
-    waiter.promise().events.push_back(this);
+    promise.events.push_back(this);
   }
 };
 
@@ -110,7 +119,7 @@ struct suspend_always_to
 };
 
 template <typename T>
-class promise : private detail::promise_wait_callgraph
+class promise final : private detail::promise_wait_callgraph
 {
   public:
     future<T> get_return_object() { return future<T>(std::coroutine_handle<promise>::from_promise(*this)); }
@@ -171,7 +180,7 @@ class promise : private detail::promise_wait_callgraph
 
     constexpr auto await_transform(io::poll&& obj) noexcept
     {
-      return awaitable_poll(std::move(obj), std::coroutine_handle<detail::promise_wait_callgraph>::from_promise(*this));
+      return awaitable_poll(std::move(obj), std::coroutine_handle<promise>::from_promise(*this), *this);
     }
 
     struct promise_retriever
