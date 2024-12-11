@@ -151,25 +151,25 @@ void mark_events(promise_wait_callgraph& polled, const ::fd_set& readfds, const 
     mark_events(*callee, readfds, writefds, exceptfds, timeout);
 }
 
-bool dispatch_events(promise_wait_callgraph& polled) noexcept
+std::coroutine_handle<> pop_ready_completion_handler(promise_wait_callgraph& polled) noexcept
 {
   using std::ranges::rbegin;
   using std::ranges::rend;
 
-  //// FIXME: recursing into children who's event handlers may cause them to be destroyed!
-  //// Only the root node is safe from destruction (at worst it's waiting at its final suspend point)
-  //// So whenever we've executed any event handler we should restart recursion, somehow.
+  // recursing into children who's event handlers may cause them to be destroyed!
+  // Only the root node is safe from destruction (at worst it's waiting at its final suspend point)
+  // So whenever we've executed any event handler we should restart recursion.
+  //
+  // We solve this by returning the first ready event handler back to the top-caller and letting
+  // it call the event handler, then recursing back into the call tree to find the next ready
+  // handler.
   for (auto* const callee : polled.callees)
   {
-    if (dispatch_events(*callee))
-      return true;
+    if (auto handler = pop_ready_completion_handler(*callee))
+      return handler;
   }
 
-  // Assume that we're the only piece of code *removing* events from the polled.events range.
-  // And that every other piece of code pushes to the *back*.
-  // Keep indexes instead of iterators because iterators may be invalidated by the event handler queueing a new event.
-
-  // Call handlers from back to front because we've moved the ones ready first to the back
+  // Pop handlers from back to front because we've moved the ones ready first to the back
   for (auto i = rbegin(polled.events), last = rend(polled.events); i != last; ++i)
   {
     assert(*i != nullptr);
@@ -181,11 +181,10 @@ bool dispatch_events(promise_wait_callgraph& polled) noexcept
     assert(waiter);
     polled.events.erase(std::next(i).base());
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i, waiter.address());
-    waiter.resume();
-    return true;
+    return waiter;
   }
 
-  return false;
+  return nullptr;
 }
 }  // anonymous namespace
 
@@ -215,8 +214,8 @@ std::error_code io_poll_context::operator()(promise_wait_callgraph& polled)
     mark_events(polled, readfds, writefds, exceptfds, timeout);
   }
 
-  while (dispatch_events(polled))
-    ;
+  while (auto handler = pop_ready_completion_handler(polled))
+    handler();
 
   return {};
 }
