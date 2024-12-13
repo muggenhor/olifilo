@@ -6,6 +6,7 @@
 #include <coroutine>
 #include <deque>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 
 #include "forward.hpp"
@@ -56,24 +57,14 @@ struct awaitable_poll : private io::poll
 
   expected<void> wait_result = {unexpect, error::uninitialized};
   std::coroutine_handle<> waiter;
-  // Need to keep an explicit reference instead of
-  // std::coroutine_handle<T=detail::promise_wait_callgraph>::promise(). Because the
-  // promise()/from_promise() functions are incorrect (on GCC 14/Clang 18) when T (without cv
-  // qualifiers) isn't exactly equal to ::promise_type. Specifically the promise_wait_callgraph base
-  // class might have less strict alignment requirements than the deriving '::promise_type'.
-  // This would result in the pointer computation performed by ::promise() using a too small offset.
-  // So completely avoid using ::promise() in a type-erased context and just store a reference.
-  promise_wait_callgraph& promise;
 
   // We need the location/address of this struct to be stable, so prohibit copying.
   // But we're still allowing the copy constructor to be callable (but *not* actually called!) by our factory function
   constexpr awaitable_poll(awaitable_poll&& rhs) = delete;
   awaitable_poll& operator=(const awaitable_poll&) = delete;
 
-  explicit constexpr awaitable_poll(const poll& event, std::coroutine_handle<> waiter, detail::promise_wait_callgraph& promise) noexcept
+  explicit constexpr awaitable_poll(const poll& event) noexcept
     : poll(event)
-    , waiter(waiter)
-    , promise(promise)
   {
   }
 
@@ -92,14 +83,17 @@ struct awaitable_poll : private io::poll
     return std::move(wait_result);
   }
 
-  void await_suspend(std::coroutine_handle<> suspended) noexcept
+  template <typename Promise>
+  requires(std::is_base_of_v<promise_wait_callgraph, Promise>)
+  void await_suspend(std::coroutine_handle<Promise> suspended) noexcept
   {
-    assert(waiter == suspended && "await_transform called from different coroutine than await_suspend!");
+    assert(waiter == nullptr && "may only await once");
+    waiter = suspended;
 
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
-    promise.events.push_back(this);
+    suspended.promise().events.push_back(this);
   }
 };
 
@@ -180,7 +174,7 @@ class promise final : private detail::promise_wait_callgraph
 
     constexpr auto await_transform(io::poll&& obj) noexcept
     {
-      return awaitable_poll(std::move(obj), std::coroutine_handle<promise>::from_promise(*this), *this);
+      return awaitable_poll(std::move(obj));
     }
 
     struct promise_retriever
@@ -211,6 +205,7 @@ class promise final : private detail::promise_wait_callgraph
     template <typename U>
     friend class promise;
     friend class future<T>;
+    friend awaitable_poll;
     friend when_all_t;
 
   private:
