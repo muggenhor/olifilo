@@ -4,13 +4,13 @@
 
 #include <algorithm>
 #include <coroutine>
-#include <deque>
 #include <system_error>
 #include <type_traits>
 #include <utility>
 
 #include "forward.hpp"
 
+#include <olifilo/detail/small_vector.hpp>
 #include <olifilo/expected.hpp>
 #include <olifilo/errors.hpp>
 #include <olifilo/io/poll.hpp>
@@ -31,10 +31,13 @@ struct awaitable_poll;
 
 struct promise_wait_callgraph
 {
+  using allocator_type = std::allocator<void*>;
+
   promise_wait_callgraph* caller;
-  std::deque<promise_wait_callgraph*> callees;
+  sbo_vector<promise_wait_callgraph*> callees;
   std::coroutine_handle<> waits_on_me;
-  std::deque<awaitable_poll*> events;
+  sbo_vector<awaitable_poll*> events;
+  [[no_unique_address]] allocator_type alloc;
 
   constexpr promise_wait_callgraph() noexcept
     : caller(this)
@@ -43,7 +46,9 @@ struct promise_wait_callgraph
 
   ~promise_wait_callgraph()
   {
-    std::erase(caller->callees, this);
+    erase(caller->callees, this);
+    callees.destroy(alloc);
+    events.destroy(alloc);
   }
 
   promise_wait_callgraph(promise_wait_callgraph&&) = delete;
@@ -94,7 +99,8 @@ struct awaitable_poll : private io::poll
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
-    suspended.promise().events.push_back(this);
+    auto& promise = suspended.promise();
+    promise.events.push_back(this, promise.alloc);
   }
 };
 
@@ -159,7 +165,7 @@ class promise final : private detail::promise_wait_callgraph
       if (detail::promise_wait_callgraph* const callee_promise = fut.handle ? &fut.handle.promise() : nullptr)
       {
         assert(std::ranges::find(callees, callee_promise) == callees.end());
-        callees.push_back(callee_promise);
+        callees.push_back(callee_promise, alloc);
         assert(callee_promise->caller == callee_promise && "stealing a future someone else is waiting on");
         callee_promise->caller = this;
       }
