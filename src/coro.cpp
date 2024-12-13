@@ -3,6 +3,7 @@
 #include <olifilo/coro/future.hpp>
 #include <olifilo/coro/io/file_descriptor.hpp>
 #include <olifilo/coro/when_all.hpp>
+#include <olifilo/coro/when_any.hpp>
 #include <olifilo/errors.hpp>
 #include <olifilo/expected.hpp>
 #include <olifilo/io/connect.hpp>
@@ -355,20 +356,49 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
 
 int main()
 {
+  using namespace std::literals::chrono_literals;
   using olifilo::when_all;
+  using olifilo::when_any;
 
 #if 0
-  if (auto r = do_mqtt(0).get();
+  if (auto r = when_any(std::array{
+        do_mqtt(0)
+      , olifilo::sleep(30s)
+      }).get();
       !r)
     throw std::system_error(r.error());
+  else if (auto ri = r->futures[r->index].get();
+      !ri)
+    throw std::system_error(ri.error());
 #else
   if (auto [r1, r2, rs] = std::apply(when_all, std::tuple{
         do_mqtt(1)
-      , do_mqtt(2)
-      , when_all(std::array{
-          do_mqtt(3),
-          do_mqtt(4),
-        })
+      , []() -> olifilo::future<void> {
+          auto ra = co_await when_any(
+              do_mqtt(2)
+            , olifilo::sleep(30s)
+            );
+          if (!ra)
+            co_return {olifilo::unexpect, ra.error()};
+          if (ra->index == 0)
+            co_return co_await std::get<0>(ra->futures);
+          assert(ra->index == 1);
+          co_return co_await std::get<1>(ra->futures);
+        }()
+      , []() -> olifilo::future<std::vector<olifilo::expected<void>>> {
+          auto ra = co_await when_any(std::array{
+              do_mqtt(3),
+              do_mqtt(4),
+              olifilo::sleep(45s),
+            });
+          if (!ra)
+            co_return {olifilo::unexpect, ra.error()};
+          std::vector<olifilo::expected<void>> rv;
+          for (auto& fut: ra->futures)
+            if (fut.done())
+              rv.emplace_back(co_await fut);
+          co_return rv;
+        }()
       }).get().value();
       !r1 || !r2 || !rs)
   {

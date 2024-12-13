@@ -19,6 +19,7 @@ template <typename T>
 inline constexpr bool is_future_v = is_future<T>::value;
 
 struct when_all_t;
+struct when_any_t;
 
 namespace detail
 {

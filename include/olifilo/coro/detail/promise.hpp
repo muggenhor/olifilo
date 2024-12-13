@@ -24,6 +24,7 @@ class current_promise
 
     // Only friends are allowed to know the promise they run in
     friend when_all_t;
+    friend when_any_t;
 };
 
 struct awaitable_poll;
@@ -145,8 +146,11 @@ class promise final : private detail::promise_wait_callgraph
 
     constexpr void return_value(expected<T>&& v) noexcept(std::is_nothrow_move_constructible_v<T>)
     {
-      // NOTE: MUST use assignment (instead of .emplace()) to be safe in case of self-assignment
-      returned_value = std::move(v);
+      // NOTE: be safe against self-assignment in case of internal implementations that steal returned_value's storage
+      if (&returned_value != &v)
+      {
+        returned_value = std::move(v);
+      }
     }
 
     template <typename U>
@@ -204,6 +208,7 @@ class promise final : private detail::promise_wait_callgraph
     friend class future<T>;
     friend awaitable_poll;
     friend when_all_t;
+    friend when_any_t;
 
   private:
     expected<T> returned_value = {unexpect, error::broken_promise};

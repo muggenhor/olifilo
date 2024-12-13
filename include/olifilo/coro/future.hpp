@@ -116,6 +116,7 @@ class [[nodiscard("future not awaited")]] future
   private:
     template <typename U>
     friend class detail::promise;
+    friend when_any_t;
 
     constexpr future(std::coroutine_handle<detail::promise<T>> handle) noexcept
       : handle(handle)

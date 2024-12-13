@@ -68,6 +68,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/coro/io/file_descriptor.hpp
       include/olifilo/coro/io/types.hpp
       include/olifilo/coro/when_all.hpp
+      include/olifilo/coro/when_any.hpp
       include/olifilo/errors.hpp
       include/olifilo/io/connect.hpp
       include/olifilo/io/fcntl.hpp
