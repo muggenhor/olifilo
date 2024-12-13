@@ -156,11 +156,8 @@ class promise final : private detail::promise_wait_callgraph
       {
         assert(std::ranges::find(callees, callee_promise) == callees.end());
         callees.push_back(callee_promise);
-
-        for (auto* const child : callees)
-        {
-          child->caller = this;
-        }
+        assert(callee_promise->caller == callee_promise && "stealing a future someone else is waiting on");
+        callee_promise->caller = this;
       }
       return std::move(fut);
     }
