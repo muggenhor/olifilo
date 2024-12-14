@@ -24,7 +24,9 @@ struct when_all_t
     ////func_name = func_name.substr(func_name.find("operator"));
 
     auto& my_promise = co_await detail::current_promise();
-    my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
+    if (auto r = my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
+        !r)
+      co_return {unexpect, r.error()};
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
@@ -45,7 +47,9 @@ struct when_all_t
 
     auto& my_promise = co_await detail::current_promise();
     if constexpr (std::random_access_iterator<I>)
-      my_promise.callees.reserve(last - first, my_promise.alloc);
+      if (auto r = my_promise.callees.reserve(last - first, my_promise.alloc);
+          !r)
+        co_return {unexpect, r.error()};
 
     // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
     std::size_t count = 0;

@@ -5,7 +5,11 @@
 #include <algorithm>
 #include <cassert>
 #include <memory>
+#include <new>
 #include <type_traits>
+#include <utility>
+
+#include <olifilo/expected.hpp>
 
 #if defined(__has_feature) && __has_feature(address_sanitizer) || defined(__SANITIZE_ADDRESS__)
 #include <sanitizer/asan_interface.h>
@@ -81,41 +85,61 @@ struct sbo_vector
   }
 
   template <typename Allocator>
-  constexpr void reserve(std::size_t count, Allocator& alloc)
+  constexpr expected<void> reserve(std::size_t count, Allocator& alloc) noexcept
   {
     if (count <= 2)
-      return;
+      return {};
 
     if (!is_small() && static_cast<std::size_t>(end_of_storage - big.start) >= count)
-      return;
+      return {};
 
     using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
+    using traits_t = std::allocator_traits<allocator_type>;
     allocator_type alloc_(alloc);
+    const auto [ptr, size] = [&alloc_, count]()
 #if __cpp_lib_allocate_at_least >= 202306L
-    const auto [ptr, size] = std::allocator_traits<allocator_type>::allocate_at_least(alloc_, count);
+      -> std::allocation_result<typename traits_t::pointer, typename traits_t::size_type>
 #else
-    const auto size = count;
-    const auto ptr = std::allocator_traits<allocator_type>::allocate(alloc_, size);
+      -> std::pair<typename traits_t::pointer, typename traits_t::size_type>
 #endif
+    {
+      try
+      {
+#if __cpp_lib_allocate_at_least >= 202306L
+        return traits_t::allocate_at_least(alloc_, count);
+#else
+        return {traits_t::allocate(alloc_, count), count};
+#endif
+      }
+      catch (const std::bad_alloc&)
+      {
+        return {nullptr, 0};
+      }
+    }();
+
+    if (ptr == nullptr)
+      return {unexpect, make_error_code(std::errc::not_enough_memory)};
 
     const auto first = begin();
     const auto last = end();
     const auto new_end = std::uninitialized_move(first, last, ptr);
     for (auto i = first; i != last; ++i)
-      std::allocator_traits<allocator_type>::destroy(alloc_, i);
+      traits_t::destroy(alloc_, i);
     if (!is_small())
     {
       ASAN_POISON_MEMORY_REGION(first, (end_of_storage - first) * sizeof(*last));
-      std::allocator_traits<allocator_type>::deallocate(alloc_, first, end_of_storage - first);
+      traits_t::deallocate(alloc_, first, end_of_storage - first);
     }
 
     big.start = ptr;
     big.finish = new_end;
     end_of_storage = ptr + size;
+
+    return {};
   }
 
   template <typename Allocator>
-  constexpr void push_back(T el, Allocator& alloc)
+  constexpr expected<void> push_back(T el, Allocator& alloc)
   {
     assert(el != nullptr);
 
@@ -123,25 +147,31 @@ struct sbo_vector
     {
       assert(end() - begin() == 0);
       small.vals[0] = el;
-      return;
+      return {};
     }
     else if (!small.vals[1])
     {
       assert(end() - begin() == 1);
       small.vals[1] = el;
-      return;
+      return {};
     }
 
-    using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
-    allocator_type alloc_(alloc);
-    if (is_small())
-      reserve(4, alloc_);
-    else if (big.finish == end_of_storage)
-      reserve((end_of_storage - big.start) * 2, alloc_);
+    if (auto r = reserve(
+            is_small()
+              ? 4
+              : (end_of_storage - big.start) * (big.finish == end_of_storage ? 2 : 1)
+          , alloc
+          );
+        !r)
+      return {unexpect, r.error()};
 
     assert(big.finish < end_of_storage);
     ASAN_UNPOISON_MEMORY_REGION(big.finish, sizeof(*big.finish));
+    using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
+    allocator_type alloc_(alloc);
     std::allocator_traits<allocator_type>::construct(alloc_, big.finish++, el);
+
+    return {};
   }
 
   constexpr T* erase(T* const first, T* last) noexcept(

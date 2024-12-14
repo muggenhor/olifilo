@@ -46,9 +46,12 @@ struct when_any_t
     if (sizeof...(Ts) == 0 || rv->index != static_cast<std::size_t>(-1))
       co_return rv;
 
+    // Prevent push_back() below from being able to have allocation failures
+    if (auto r = my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
+        !r)
+      co_return {unexpect, r.error()};
     // Simulate promise.await_transform(futures)... We can't use co_await because it would wait on *all* futures.
-    my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
-    (my_promise.callees.push_back(&std::get<Is>(rv->futures).handle.promise(), my_promise.alloc), ...);
+    ((void)my_promise.callees.push_back(&std::get<Is>(rv->futures).handle.promise(), my_promise.alloc), ...);
     ((std::get<Is>(rv->futures).handle.promise().caller = &my_promise), ...);
     ((std::get<Is>(rv->futures).handle.promise().waits_on_me = me), ...);
 
@@ -86,7 +89,10 @@ struct when_any_t
     rv.emplace();
     if constexpr (std::random_access_iterator<I>)
     {
-      my_promise.callees.reserve(last - first, my_promise.alloc);
+      // Prevent push_back() below from being able to have allocation failures
+      if (auto r = my_promise.callees.reserve(last - first, my_promise.alloc);
+          !r)
+        co_return {unexpect, r.error()};
       rv->futures.reserve(last - first);
     }
 
@@ -116,8 +122,10 @@ struct when_any_t
       }
 
       auto& callee = static_cast<detail::promise_wait_callgraph&>(future.handle.promise());
-      my_promise.callees.push_back(&callee, my_promise.alloc);
       assert(callee.caller == &callee && "stealing a future someone else is waiting on");
+      const auto push_success = my_promise.callees.push_back(&callee, my_promise.alloc);
+      [[assume(!std::random_access_iterator<I> || push_success)]];
+      assert(push_success && "uhoh don't know how to handle allocation failure here!");
       callee.caller = &my_promise;
       callee.waits_on_me = me;
       ++idx;

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <coroutine>
+#include <exception>
 #include <system_error>
 #include <type_traits>
 #include <utility>
@@ -91,7 +92,7 @@ struct awaitable_poll : private io::poll
 
   template <typename Promise>
   requires(std::is_base_of_v<promise_wait_callgraph, Promise>)
-  void await_suspend(std::coroutine_handle<Promise> suspended) noexcept
+  std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> suspended) noexcept
   {
     assert(waiter == nullptr && "may only await once");
     waiter = suspended;
@@ -100,7 +101,14 @@ struct awaitable_poll : private io::poll
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
     auto& promise = suspended.promise();
-    promise.events.push_back(this, promise.alloc);
+    if (auto r = promise.events.push_back(this, promise.alloc);
+        !r)
+    {
+      wait_result = {unexpect, r.error()};
+      return std::exchange(waiter, nullptr);
+    }
+
+    return std::noop_coroutine();
   }
 };
 
@@ -165,7 +173,11 @@ class promise final : private detail::promise_wait_callgraph
       if (detail::promise_wait_callgraph* const callee_promise = fut.handle ? &fut.handle.promise() : nullptr)
       {
         assert(std::ranges::find(callees, callee_promise) == callees.end());
-        callees.push_back(callee_promise, alloc);
+        if (!callees.push_back(callee_promise, alloc))
+        {
+          assert(!"awaiting a single future shouldn't require memory to be allocated, so allocation failures shouldn't happen!");
+          std::terminate();
+        }
         assert(callee_promise->caller == callee_promise && "stealing a future someone else is waiting on");
         callee_promise->caller = this;
       }
