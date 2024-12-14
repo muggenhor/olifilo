@@ -238,7 +238,7 @@ struct expected_storage<void>
 } // namespace detail
 
 template <typename T>
-class expected
+class [[nodiscard("error silently ignored")]] expected
 {
   public:
     constexpr expected(const expected& rhs)
