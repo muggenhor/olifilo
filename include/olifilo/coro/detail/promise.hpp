@@ -34,20 +34,20 @@ struct promise_wait_callgraph
 {
   using allocator_type = std::allocator<void*>;
 
-  promise_wait_callgraph* caller;
+  promise_wait_callgraph* caller = nullptr;
   sbo_vector<promise_wait_callgraph*> callees;
   std::coroutine_handle<> waits_on_me;
   sbo_vector<awaitable_poll*> events;
   [[no_unique_address]] allocator_type alloc;
 
-  constexpr promise_wait_callgraph() noexcept
-    : caller(this)
-  {
-  }
+  constexpr promise_wait_callgraph() noexcept = default;
 
   ~promise_wait_callgraph()
   {
-    erase(caller->callees, this);
+    if (caller)
+      erase(caller->callees, this);
+    for (auto* const callee : callees)
+      callee->caller = nullptr;
     callees.destroy(alloc);
     events.destroy(alloc);
   }
@@ -178,7 +178,7 @@ class promise final : private detail::promise_wait_callgraph
           assert(!"awaiting a single future shouldn't require memory to be allocated, so allocation failures shouldn't happen!");
           std::terminate();
         }
-        assert(callee_promise->caller == callee_promise && "stealing a future someone else is waiting on");
+        assert(callee_promise->caller == nullptr && "stealing a future someone else is waiting on");
         callee_promise->caller = this;
       }
       return std::move(fut);

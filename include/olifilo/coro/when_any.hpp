@@ -62,7 +62,7 @@ struct when_any_t
     (((rv->index == static_cast<std::size_t>(-1) && std::get<Is>(rv->futures).handle.promise().waits_on_me == nullptr) ? void(rv->index = Is) : void()), ...);
 
     // Restore futures to being the top of their respective await call graphs with nothing waiting on them (anymore)
-    ((std::get<Is>(rv->futures).handle.promise().caller = &std::get<Is>(rv->futures).handle.promise()), ...);
+    ((std::get<Is>(rv->futures).handle.promise().caller = nullptr), ...);
     ((std::get<Is>(rv->futures).handle.promise().waits_on_me = nullptr), ...);
 
     my_promise.callees.destroy(my_promise.alloc);
@@ -115,14 +115,14 @@ struct when_any_t
         {
           --idx;
           auto& callee = rv->futures[idx].handle.promise();
-          callee.caller = &callee;
+          callee.caller = nullptr;
           callee.waits_on_me = nullptr;
         }
         continue;
       }
 
       auto& callee = static_cast<detail::promise_wait_callgraph&>(future.handle.promise());
-      assert(callee.caller == &callee && "stealing a future someone else is waiting on");
+      assert(callee.caller == nullptr && "stealing a future someone else is waiting on");
       const auto push_success = my_promise.callees.push_back(&callee, my_promise.alloc);
       [[assume(!std::random_access_iterator<I> || push_success)]];
       assert(push_success && "uhoh don't know how to handle allocation failure here!");
@@ -150,7 +150,7 @@ struct when_any_t
       ++idx;
 
       // Restore futures to being the top of their respective await call graphs with nothing waiting on them (anymore)
-      callee.caller = &callee;
+      callee.caller = nullptr;
       callee.waits_on_me = nullptr;
     }
 
