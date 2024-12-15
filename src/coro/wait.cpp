@@ -21,6 +21,9 @@ future<std::size_t>
   if (promises.empty())
     co_return {std::in_place, 0};
 
+  /******************
+   * Input scanning *
+   ******************/
   constexpr auto ready_input = [] (auto fut) noexcept { return fut == nullptr; };
   constexpr auto not_ready_input = [ready_input] (auto fut) noexcept { return !ready_input(fut); };
 
@@ -44,12 +47,15 @@ future<std::size_t>
   assert(first_not_ready_future_index <= last_not_ready_future_index);
 
   auto& my_promise = co_await detail::current_promise();
-  const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
 
   // Placeholder that's safe for our executors while still occupying a slot to ensure a one-to-one mapping of positions in 'callees' and 'promises'.
   static constinit const detail::promise_wait_callgraph nop_always_ready_promise;
 
-  // 
+  /*****************************************************************************************
+   * Prepare our own promise to be ready for the executor to find all events and resume us *
+   *****************************************************************************************/
+
+  // Borrow input promises list as our own promise's callee list to avoid allocating
   unsafe_swap(my_promise.callees, promises);
   struct scope_exit
   {
@@ -80,6 +86,7 @@ future<std::size_t>
   assert(ready(&nop_always_ready_promise));
 
   // Simulate promise.await_transform(promises)... We can't use co_await because it would wait on *all* promises (in order, one by one).
+  const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
   for (auto*& future : my_promise.callees)
   {
     if (ready_input(future))
@@ -115,6 +122,10 @@ future<std::size_t>
     future->waits_on_me = nullptr;
   };
 
+  /***********************************************************************************************
+   * Suspend ourselves, detect timeout, and scan the list of promises to see if enough are ready *
+   ***********************************************************************************************/
+
   auto first_not_ready_future = my_promise.callees.begin() + first_not_ready_future_index;
   auto last_not_ready_future = my_promise.callees.begin() + last_not_ready_future_index;
   while (first_not_ready_future != last_not_ready_future)
@@ -126,6 +137,7 @@ future<std::size_t>
     assert(std::ranges::empty(my_promise.events) && "TODO: test timeouts!");
     assert(first_ready_future);
     assert(wait_until != until::first_completed || *first_ready_future == my_promise.callees.size());
+
     // Now allow this future's .get() to handle the actual I/O multiplexing
     co_await std::suspend_always();
 
