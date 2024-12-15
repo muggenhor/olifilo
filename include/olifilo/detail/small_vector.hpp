@@ -91,7 +91,10 @@ struct sbo_vector
   }
 
   template <typename Allocator>
-  constexpr expected<void> reserve(std::size_t count, Allocator& alloc) noexcept
+  constexpr expected<void> reserve(std::size_t count, Allocator& alloc) noexcept(
+      std::is_nothrow_move_constructible_v<T>
+   || (std::is_nothrow_default_constructible_v<T>
+    && std::is_nothrow_swappable_v<T>))
   {
     if (count <= 2)
       return {};
@@ -128,18 +131,52 @@ struct sbo_vector
 
     const auto first = begin();
     const auto last = end();
-    const auto new_end = std::uninitialized_move(first, last, ptr);
+    auto new_end = ptr;
+    for (auto i = first; i != last; ++i, ++new_end)
+    {
+      if constexpr (std::is_nothrow_move_constructible_v<T>)
+      {
+        std::uninitialized_construct_using_allocator(new_end, alloc_, std::move(*i));
+      }
+      else if constexpr (std::is_nothrow_default_constructible_v<T>
+                      && std::is_nothrow_swappable_v<T>)
+      {
+        using std::swap;
+        std::uninitialized_construct_using_allocator(new_end, alloc_);
+        swap(*new_end, *i);
+      }
+      else
+      {
+        try
+        {
+          std::uninitialized_construct_using_allocator(new_end, alloc_, std::move(*i));
+        }
+        catch (...)
+        {
+          // Make an effort to move back the already moved elements for exception safety.
+          // But lets not care if *that* fails with another exception.
+          for (; i != first; --i, --new_end)
+          {
+            *(new_end - 1) = std::move(*(i - 1));
+            traits_t::destroy(alloc_, i - 1);
+          }
+          traits_t::deallocate(alloc_, ptr, size);
+          throw;
+        }
+      }
+    }
     for (auto i = first; i != last; ++i)
       traits_t::destroy(alloc_, i);
     if (!is_small())
     {
-      ASAN_POISON_MEMORY_REGION(first, (end_of_storage - first) * sizeof(*last));
+      ASAN_POISON_MEMORY_REGION(first, (end_of_storage - first) * sizeof(*end_of_storage));
       traits_t::deallocate(alloc_, first, end_of_storage - first);
     }
 
     big.start = ptr;
     big.finish = new_end;
     end_of_storage = ptr + size;
+    ASAN_POISON_MEMORY_REGION(new_end, (new_end - ptr) * sizeof(*new_end));
 
     return {};
   }
