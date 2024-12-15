@@ -67,9 +67,14 @@ struct when_any_t
 
     auto&& rv = std::move(my_promise.returned_value);
     const auto count = static_cast<std::size_t>(std::distance(first, last));
-    rv.emplace();
+    try
     {
+      rv.emplace();
       rv->futures.reserve(count);
+    }
+    catch (const std::bad_alloc&)
+    {
+      co_return {unexpect, make_error_code(std::errc::not_enough_memory)};
     }
 
     // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine

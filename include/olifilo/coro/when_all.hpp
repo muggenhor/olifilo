@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <iterator>
+#include <new>
 #include <ranges>
 #include <tuple>
 #include <type_traits>
@@ -48,8 +49,15 @@ struct when_all_t
 
     const auto count = std::ranges::distance(first, last);
     auto&& rv = std::move(my_promise.returned_value);
-    rv.emplace();
-    rv->reserve(count);
+    try
+    {
+      rv.emplace();
+      rv->reserve(count);
+    }
+    catch (const std::bad_alloc&)
+    {
+      co_return {unexpect, make_error_code(std::errc::not_enough_memory)};
+    }
 
     detail::sbo_vector<std::iter_value_t<I>> my_futures;
     struct scope_exit
