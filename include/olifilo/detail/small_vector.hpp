@@ -51,6 +51,7 @@ struct sbo_vector
   constexpr ~sbo_vector() noexcept
   {
     assert(is_small());
+    clear(); // call destructors
   }
 
   struct big_t
