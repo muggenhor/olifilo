@@ -34,13 +34,10 @@ namespace olifilo::detail
 // In the worst case we could always build a tree structure (as-if using nested when_all/when_any)
 // to circumvent this limit.
 template <typename T>
-requires(std::is_pointer_v<T>)
 struct sbo_vector
 {
-  constexpr sbo_vector() noexcept(
-      std::is_nothrow_default_constructible_v<T>)
-  requires(std::is_default_constructible_v<T>)
-    : small{{T{}, T{}}}
+  constexpr sbo_vector() noexcept
+    : small{}
   {
   }
 
@@ -58,31 +55,55 @@ struct sbo_vector
   {
     T* start;
     T* finish;
-    // invariant: start && finish && end_of_storage && start <= finish <= end_of_storage
+    // invariant: start <= finish && (finish - start) <= (storage_capacity_or_size >> 1) && (storage_capacity_or_size & 1) == 0
   };
 
-  struct small_t
+  static constexpr std::size_t small_capacity = sizeof(big_t) / sizeof(T);
+
+  struct empty_t {};
+  union small_t
   {
-    T vals[2];
-    // invariant: end_of_storage == nullptr && (vals[0] || !vals[1])
+    constexpr ~small_t() noexcept {} // NOP: owning class handles destruction via clear()
+
+    empty_t empty = {};
+    T val;
+    // invariant: (storage_capacity_or_size & 1) && (storage_capacity_or_size >> 1) <= small_capacity
   };
 
   union {
-    small_t small;
+    small_t small[small_capacity];
     big_t big;
   };
-  T* end_of_storage = nullptr;
+  // if ((storage_capacity_or_size & 1) == 0) size     := (storage_capacity_or_size >> 1)
+  //                                     else capacity := (storage_capacity_or_size >> 1)
+  std::size_t storage_capacity_or_size = 1;
 
   constexpr bool is_small() const noexcept
   {
-    return end_of_storage == nullptr;
+    return this->storage_capacity_or_size & 1;
+  }
+
+  constexpr std::size_t capacity() const noexcept
+  {
+    if (is_small())
+      return small_capacity;
+    else
+      return this->storage_capacity_or_size >> 1u;
+  }
+
+  constexpr std::size_t size() const noexcept
+  {
+    if (is_small())
+      return this->storage_capacity_or_size >> 1u;
+    else
+      return this->big.finish - this->big.start;
   }
 
   template <typename Self>
   constexpr auto begin(this Self&& self) noexcept -> std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const T*, T*>
   {
     if (self.is_small())
-      return &self.small.vals[0];
+      return &self.small[0].val;
     else
       return self.big.start;
   }
@@ -91,7 +112,7 @@ struct sbo_vector
   constexpr auto end(this Self&& self) noexcept -> std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const T*, T*>
   {
     if (self.is_small())
-      return std::find(&self.small.vals[0], &self.small.vals[2], nullptr);
+      return std::forward<Self>(self).begin() + self.size();
     else
       return self.big.finish;
   }
@@ -102,15 +123,20 @@ struct sbo_vector
    || (std::is_nothrow_default_constructible_v<T>
     && std::is_nothrow_swappable_v<T>))
   {
-    if (count <= 2)
+    if (count <= capacity())
       return {};
 
-    if (!is_small() && static_cast<std::size_t>(end_of_storage - big.start) >= count)
-      return {};
+    // Overflow either in byte-count or item-count
+    if (count > (std::size_t(-1) >> 1u)
+     || count > (std::size_t(-1) / sizeof(T)))
+      return {unexpect, make_error_code(std::errc::result_out_of_range)};
 
     using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
     using traits_t = std::allocator_traits<allocator_type>;
     allocator_type alloc_(alloc);
+    if (count > traits_t::max_size(alloc_))
+      return {unexpect, make_error_code(std::errc::not_enough_memory)};
+
     const auto [ptr, size] = [&alloc_, count]()
 #if __cpp_lib_allocate_at_least >= 202306L
       -> std::allocation_result<typename traits_t::pointer, typename traits_t::size_type>
@@ -175,50 +201,45 @@ struct sbo_vector
       traits_t::destroy(alloc_, i);
     if (!is_small())
     {
-      ASAN_POISON_MEMORY_REGION(first, (end_of_storage - first) * sizeof(*end_of_storage));
-      traits_t::deallocate(alloc_, first, end_of_storage - first);
+      ASAN_POISON_MEMORY_REGION(first, capacity() * sizeof(*first));
+      traits_t::deallocate(alloc_, first, capacity());
     }
 
-    big.start = ptr;
-    big.finish = new_end;
-    end_of_storage = ptr + size;
-    ASAN_POISON_MEMORY_REGION(new_end, (new_end - ptr) * sizeof(*new_end));
+    this->big.start = ptr;
+    this->big.finish = new_end;
+    this->storage_capacity_or_size = (size << 1u) | 0u;
+    ASAN_POISON_MEMORY_REGION(new_end, (size - (new_end - ptr)) * sizeof(*new_end));
 
     return {};
   }
 
   template <typename Allocator>
-  constexpr expected<void> push_back(T el, Allocator& alloc)
+  constexpr expected<void> push_back(T el, Allocator& alloc) noexcept(
+      noexcept(this->reserve(0, alloc)))
   {
-    assert(el != nullptr);
-
-    if (!small.vals[0])
-    {
-      assert(end() - begin() == 0);
-      small.vals[0] = el;
-      return {};
-    }
-    else if (!small.vals[1])
-    {
-      assert(end() - begin() == 1);
-      small.vals[1] = el;
-      return {};
-    }
-
-    if (auto r = reserve(
-            is_small()
-              ? 4
-              : (end_of_storage - big.start) * (big.finish == end_of_storage ? 2 : 1)
-          , alloc
-          );
-        !r)
-      return {unexpect, r.error()};
-
-    assert(big.finish < end_of_storage);
-    ASAN_UNPOISON_MEMORY_REGION(big.finish, sizeof(*big.finish));
     using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
     allocator_type alloc_(alloc);
-    std::allocator_traits<allocator_type>::construct(alloc_, big.finish++, el);
+
+    assert(this->size() <= this->capacity());
+    if (this->size() == this->capacity())
+    {
+      if (auto r = reserve(capacity() * 2, alloc);
+          !r)
+        return {unexpect, r.error()};
+    }
+    assert(this->size() < this->capacity());
+
+    if (this->is_small())
+    {
+      std::uninitialized_construct_using_allocator(this->end(), alloc_, std::move(el));
+      this->storage_capacity_or_size += 2u;
+      assert(this->storage_capacity_or_size & 1u);
+      return {};
+    }
+
+    ASAN_UNPOISON_MEMORY_REGION(big.finish, sizeof(*big.finish));
+    std::uninitialized_construct_using_allocator(big.finish, alloc_, std::move(el));
+    ++big.finish;
 
     return {};
   }
@@ -228,21 +249,24 @@ struct sbo_vector
    && std::is_nothrow_default_constructible_v<T>
    && std::is_nothrow_destructible_v<T>)
   {
-    if (is_small())
-    {
-      const auto the_end = end();
-      last = std::move(last, the_end, first);
-      std::fill(last, the_end, T{});
-      return last;
-    }
+    const auto the_start = this->begin();
+    const auto the_end = this->end();
 
-    last = std::move(last, big.finish, first);
-    std::destroy_n(last, big.finish - last);
-    ASAN_POISON_MEMORY_REGION(last, (big.finish - last) * sizeof(*big.finish));
-    return big.finish = last;
+    assert(the_start <= first);
+    assert(last <= the_end);
+
+    last = std::move(last, the_end, first);
+    std::destroy_n(last, the_end - last);
+    ASAN_POISON_MEMORY_REGION(last, (the_end - last) * sizeof(*the_end));
+
+    if (this->is_small())
+      this->storage_capacity_or_size = (static_cast<std::size_t>(last - the_start) << 1u) | 1u;
+    else
+      big.finish = last;
+    return last;
   }
 
-  friend constexpr decltype(auto) erase(sbo_vector& v, T el) noexcept(
+  friend constexpr decltype(auto) erase(sbo_vector& v, const T& el) noexcept(
       std::is_nothrow_move_constructible_v<T>
    && std::is_nothrow_move_assignable_v<T>
    && std::is_nothrow_default_constructible_v<T>
@@ -277,9 +301,10 @@ struct sbo_vector
     {
       using allocator_type = typename std::allocator_traits<Allocator>::template rebind_alloc<T>;
       allocator_type alloc_(alloc);
-      std::allocator_traits<allocator_type>::deallocate(alloc_, big.start, end_of_storage - big.start);
-      end_of_storage = nullptr;
-      std::uninitialized_default_construct(&small.vals[0], &small.vals[2]);
+      std::allocator_traits<allocator_type>::deallocate(alloc_, big.start, this->capacity());
+      this->storage_capacity_or_size = (0u << 1u) | 1u;
+      std::destroy_at(&big.start);
+      std::destroy_at(&big.finish);
     }
 
     assert(is_small());
