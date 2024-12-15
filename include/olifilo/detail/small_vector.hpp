@@ -48,6 +48,11 @@ struct sbo_vector
   sbo_vector(const sbo_vector&) = delete;
   sbo_vector& operator=(const sbo_vector&) = delete;
 
+  constexpr ~sbo_vector() noexcept
+  {
+    assert(is_small());
+  }
+
   struct big_t
   {
     T* start;
@@ -275,6 +280,8 @@ struct sbo_vector
       end_of_storage = nullptr;
       std::uninitialized_default_construct(&small.vals[0], &small.vals[2]);
     }
+
+    assert(is_small());
   }
 };
 }  // namespace olifilo::detail
