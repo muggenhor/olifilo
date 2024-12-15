@@ -99,6 +99,11 @@ struct sbo_vector
       return this->big.finish - this->big.start;
   }
 
+  constexpr bool empty() const noexcept
+  {
+    return size() == 0;
+  }
+
   template <typename Self>
   constexpr auto begin(this Self&& self) noexcept -> std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const T*, T*>
   {
@@ -115,6 +120,70 @@ struct sbo_vector
       return std::forward<Self>(self).begin() + self.size();
     else
       return self.big.finish;
+  }
+
+  // This requires the used allocators for both containers to have been the same for destruction to be safe.
+  // Otherwise it requires swapping *back* before allowing *either* container to be destroyed.
+  friend void unsafe_swap(sbo_vector& lhs, sbo_vector& rhs) noexcept(
+        std::is_nothrow_swappable_v<T>
+     && std::is_nothrow_move_constructible_v<T>
+     && std::is_nothrow_destructible_v<T>)
+    requires(std::is_swappable_v<T> && std::is_move_constructible_v<T> && std::is_destructible_v<T>)
+  {
+    using std::swap;
+
+    if (lhs.is_small())
+    {
+      if (rhs.is_small())
+      {
+        auto lhs_first = lhs.begin();
+        auto rhs_first = rhs.begin();
+        auto lhs_last = lhs.end();
+        auto rhs_last = rhs.end();
+        for (; lhs_first != lhs_last && rhs_first != rhs_last; ++lhs_first, ++rhs_first)
+          std::ranges::iter_swap(lhs_first, rhs_first);
+        if (lhs_first != lhs_last)
+        {
+          std::move(lhs_first, lhs_last, rhs_last);
+          std::destroy(lhs_first, lhs_last);
+        }
+        else if (rhs_first != rhs_last)
+        {
+          std::move(rhs_first, rhs_last, lhs_last);
+          std::destroy(rhs_first, rhs_last);
+        }
+        swap(lhs.storage_capacity_or_size, rhs.storage_capacity_or_size);
+      }
+      else
+      {
+        const auto lhs_first = lhs.begin();
+        const auto lhs_last = lhs.end();
+        small_t tmp[small_capacity];
+        const auto tmp_first = &tmp[0].val;
+        const auto tmp_last = std::uninitialized_move(lhs_first, lhs_last, tmp_first);
+        std::destroy(lhs_first, lhs_last);
+
+        lhs.big.start = rhs.big.start;
+        lhs.big.finish = rhs.big.finish;
+
+        std::uninitialized_move(tmp_first, tmp_last, &rhs.small[0].val);
+        std::destroy(tmp_first, tmp_last);
+        swap(lhs.storage_capacity_or_size, rhs.storage_capacity_or_size);
+      }
+    }
+    else
+    {
+      if (rhs.is_small())
+      {
+        return unsafe_swap(rhs, lhs);
+      }
+      else
+      {
+        swap(lhs.big.start, rhs.big.start);
+        swap(lhs.big.finish, rhs.big.finish);
+        swap(lhs.storage_capacity_or_size, rhs.storage_capacity_or_size);
+      }
+    }
   }
 
   template <typename Allocator>
