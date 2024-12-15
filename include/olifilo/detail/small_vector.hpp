@@ -37,7 +37,13 @@ template <typename T>
 requires(std::is_pointer_v<T>)
 struct sbo_vector
 {
-  sbo_vector() = default;
+  constexpr sbo_vector() noexcept(
+      std::is_nothrow_default_constructible_v<T>)
+  requires(std::is_default_constructible_v<T>)
+    : small{{T{}, T{}}}
+  {
+  }
+
   // we (currently) don't need copying so don't bother implementing it
   sbo_vector(const sbo_vector&) = delete;
   sbo_vector& operator=(const sbo_vector&) = delete;
@@ -56,7 +62,7 @@ struct sbo_vector
   };
 
   union {
-    small_t small = {};
+    small_t small;
     big_t big;
   };
   T* end_of_storage = nullptr;
