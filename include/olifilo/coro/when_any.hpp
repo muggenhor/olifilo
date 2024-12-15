@@ -3,7 +3,10 @@
 #pragma once
 
 #include <cstddef>
+#include <iterator>
+#include <ranges>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -32,40 +35,18 @@ struct when_any_t
   requires(sizeof...(Ts) == sizeof...(Is))
   future<when_any_result<std::tuple<future<Ts>...>>> operator()(std::index_sequence<Is...>, future<Ts>&&... futures) const noexcept
   {
-    assert((futures && ... && "not allowed to await invalid (moved-from) futures"));
-    assert(((futures.handle.promise().waits_on_me == nullptr) && ... && "internal logic error: not allowed to await futures already being awaited"));
-
     auto& my_promise = co_await detail::current_promise();
-    const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
 
-    expected<when_any_result<std::tuple<future<Ts>...>>>&& rv = std::move(my_promise.returned_value);
+    auto&& rv = std::move(my_promise.returned_value);
+    // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine
+    // Not taking them by value to ensure that allocation failure for the coroutine frame doesn't destroy them...
     rv.emplace(std::move(futures)...);
 
-    // Early escape if we discover a ready future
-    (((rv->index == static_cast<std::size_t>(-1) && std::get<Is>(rv->futures).done()) ? void(rv->index = Is) : void()), ...);
-    if (sizeof...(Ts) == 0 || rv->index != static_cast<std::size_t>(-1))
-      co_return rv;
-
-    // Prevent push_back() below from being able to have allocation failures
-    if (auto r = my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
+    if (const auto r = co_await wait(until::first_completed, std::get<Is>(rv->futures)...);
         !r)
       co_return {unexpect, r.error()};
-    // Simulate promise.await_transform(futures)... We can't use co_await because it would wait on *all* futures.
-    ((void)my_promise.callees.push_back(&std::get<Is>(rv->futures).handle.promise(), my_promise.alloc), ...);
-    ((std::get<Is>(rv->futures).handle.promise().caller = &my_promise), ...);
-    ((std::get<Is>(rv->futures).handle.promise().waits_on_me = me), ...);
-
-    // Now allow this future's .get() to handle the actual I/O multiplexing
-    co_await std::suspend_always();
-
-    // Find index of the future that woke us up
-    (((rv->index == static_cast<std::size_t>(-1) && std::get<Is>(rv->futures).handle.promise().waits_on_me == nullptr) ? void(rv->index = Is) : void()), ...);
-
-    // Restore futures to being the top of their respective await call graphs with nothing waiting on them (anymore)
-    ((std::get<Is>(rv->futures).handle.promise().caller = nullptr), ...);
-    ((std::get<Is>(rv->futures).handle.promise().waits_on_me = nullptr), ...);
-
-    my_promise.callees.destroy(my_promise.alloc);
+    else
+      rv->index = *r == sizeof...(futures) ? static_cast<std::size_t>(-1) : *r;
 
     co_return rv;
   }
@@ -83,78 +64,23 @@ struct when_any_t
   >>> operator()(I first, S const last) const noexcept
   {
     auto& my_promise = co_await detail::current_promise();
-    const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
 
-    expected<when_any_result<std::vector<typename std::iterator_traits<I>::value_type>>>&& rv = std::move(my_promise.returned_value);
+    auto&& rv = std::move(my_promise.returned_value);
+    const auto count = static_cast<std::size_t>(std::distance(first, last));
     rv.emplace();
-    if constexpr (std::random_access_iterator<I>)
     {
-      // Prevent push_back() below from being able to have allocation failures
-      if (auto r = my_promise.callees.reserve(last - first, my_promise.alloc);
-          !r)
-        co_return {unexpect, r.error()};
-      rv->futures.reserve(last - first);
+      rv->futures.reserve(count);
     }
 
-    // Simulate promise.await_transform(futures)... We can't use co_await because it would wait on *all* futures.
-    for (unsigned idx = 0; first != last; ++first)
-    {
-      assert(*first && "not allowed to await invalid (moved-from) futures");
-      assert(first->handle.promise().waits_on_me == nullptr && "internal logic error: not allowed to await futures already being awaited");
-      auto& future = rv->futures.emplace_back(std::move(*first));
+    // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine
+    for (; first != last; ++first)
+      rv->futures.emplace_back(std::ranges::iter_move(first));
 
-      if (rv->index != static_cast<std::size_t>(-1))
-        continue;
-
-      // Early escape if we discover a ready future
-      if (future.done())
-      {
-        rv->index = idx;
-        // Restore futures to previous state
-        while (idx)
-        {
-          --idx;
-          auto& callee = rv->futures[idx].handle.promise();
-          callee.caller = nullptr;
-          callee.waits_on_me = nullptr;
-        }
-        continue;
-      }
-
-      auto& callee = static_cast<detail::promise_wait_callgraph&>(future.handle.promise());
-      assert(callee.caller == nullptr && "stealing a future someone else is waiting on");
-      const auto push_success = my_promise.callees.push_back(&callee, my_promise.alloc);
-      [[assume(!std::random_access_iterator<I> || push_success)]];
-      assert(push_success && "uhoh don't know how to handle allocation failure here!");
-      callee.caller = &my_promise;
-      callee.waits_on_me = me;
-      ++idx;
-    }
-
-    if (rv->futures.empty() || rv->index != static_cast<std::size_t>(-1))
-      co_return rv;
-
-    // Now allow this future's .get() to handle the actual I/O multiplexing
-    co_await std::suspend_always();
-
-    unsigned idx = 0;
-    for (auto& future : rv->futures)
-    {
-      assert(future.handle);
-      auto& callee = future.handle.promise();
-
-      // Find index of the future that woke us up
-      if (rv->index == static_cast<std::size_t>(-1)
-       && callee.waits_on_me == nullptr)
-        rv->index = idx;
-      ++idx;
-
-      // Restore futures to being the top of their respective await call graphs with nothing waiting on them (anymore)
-      callee.caller = nullptr;
-      callee.waits_on_me = nullptr;
-    }
-
-    my_promise.callees.destroy(my_promise.alloc);
+    if (auto r = co_await wait(until::first_completed, rv->futures);
+        !r)
+      co_return {unexpect, r.error()};
+    else
+      rv->index = *r == rv->futures.end() ? static_cast<std::size_t>(-1) : *r - rv->futures.begin();
 
     co_return rv;
   }

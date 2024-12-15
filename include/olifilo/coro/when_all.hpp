@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <iterator>
 #include <ranges>
 #include <tuple>
@@ -9,59 +10,71 @@
 #include <utility>
 #include <vector>
 
+#include <olifilo/detail/small_vector.hpp>
 #include <olifilo/expected.hpp>
 
 #include "future.hpp"
+#include "wait.hpp"
 
 namespace olifilo
 {
 struct when_all_t
 {
-  template <typename... Ts>
-  future<std::tuple<expected<Ts>...>> operator()(future<Ts>... futures) const noexcept
+  template <typename... Ts, std::size_t... Is>
+  requires(sizeof...(Ts) == sizeof...(Is))
+  future<std::tuple<expected<Ts>...>> operator()(std::index_sequence<Is...>, future<Ts>&&... futures) const noexcept
   {
-    ////std::string_view func_name(__PRETTY_FUNCTION__);
-    ////func_name = func_name.substr(func_name.find("operator"));
-
-    auto& my_promise = co_await detail::current_promise();
-    if (auto r = my_promise.callees.reserve(sizeof...(futures), my_promise.alloc);
+    // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine
+    // Not taking them by value to ensure that allocation failure for the coroutine frame doesn't destroy them...
+    std::tuple my_futures(std::move(futures)...);
+    if (const auto r = co_await wait(until::all_completed, std::get<Is>(my_futures)...);
         !r)
       co_return {unexpect, r.error()};
 
-    // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
-    // Unfortunately whether the co_await pack expansion executes in this order or once per future just before suspending for each future is implementation-defined. So we need this hack...
-    ((futures = my_promise.await_transform(std::move(futures))), ...);
+    co_return {std::in_place, (co_await std::get<Is>(my_futures))...};
+  }
 
-    expected<std::tuple<expected<Ts>...>>&& rv = std::move(my_promise.returned_value);
-    // Now allow this future's .get() to handle the actual I/O multiplexing
-    rv.emplace((co_await futures)...);
-    co_return rv;
+  template <typename... Ts>
+  future<std::tuple<expected<Ts>...>> operator()(future<Ts>&&... futures) const noexcept
+  {
+    return (*this)(std::make_index_sequence<sizeof...(Ts)>(), std::move(futures)...);
   }
 
   template <std::forward_iterator I, std::sentinel_for<I> S>
-  requires(is_future_v<typename std::iterator_traits<I>::value_type>)
-  future<std::vector<typename std::iterator_traits<I>::value_type::value_type>> operator()(I first, S last) const noexcept
+  requires(is_future_v<std::iter_value_t<I>>)
+  future<std::vector<typename std::iter_value_t<I>::value_type>> operator()(I first, S last) const noexcept
   {
-    ////std::string_view func_name(__PRETTY_FUNCTION__);
-    ////func_name = func_name.substr(func_name.find("operator"));
-
     auto& my_promise = co_await detail::current_promise();
-    if constexpr (std::random_access_iterator<I>)
-      if (auto r = my_promise.callees.reserve(last - first, my_promise.alloc);
-          !r)
-        co_return {unexpect, r.error()};
 
-    // Force promise.await_transform(await-expr) to be executed for all futures *before* suspending execution of *this* coroutine when invoking co_await.
-    std::size_t count = 0;
-    for (auto i = first; i != last; ++i, ++count)
-      *i = my_promise.await_transform(std::move(*i));
-
-    expected<std::vector<typename std::iterator_traits<I>::value_type::value_type>>&& rv = std::move(my_promise.returned_value);
+    const auto count = std::ranges::distance(first, last);
+    auto&& rv = std::move(my_promise.returned_value);
     rv.emplace();
     rv->reserve(count);
-    // Now allow this future's .get() to handle the actual I/O multiplexing while collecting the results
+
+    detail::sbo_vector<std::iter_value_t<I>> my_futures;
+    struct scope_exit
+    {
+      decltype(my_promise.alloc)& alloc_;
+      decltype(my_futures)& my_futures_;
+      ~scope_exit()
+      {
+        my_futures_.destroy(alloc_);
+      }
+    } scope_exit(my_promise.alloc, my_futures);
+    if (auto r = my_futures.reserve(count, my_promise.alloc);
+        !r)
+      co_return {unexpect, r.error()};
+
+    // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine
     for (; first != last; ++first)
-      rv->emplace_back(co_await *first);
+      (void)my_futures.push_back(std::ranges::iter_move(first), my_promise.alloc);
+
+    if (const auto r = co_await wait(until::all_completed, my_futures);
+        !r)
+      co_return {unexpect, r.error()};
+
+    for (auto& future : my_futures)
+      rv->emplace_back(co_await future);
 
     co_return rv;
   }

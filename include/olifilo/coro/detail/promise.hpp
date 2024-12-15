@@ -24,6 +24,7 @@ class current_promise
     current_promise() = default;
 
     // Only friends are allowed to know the promise they run in
+    friend wait_t;
     friend when_all_t;
     friend when_any_t;
 };
@@ -225,6 +226,7 @@ class promise final : private detail::promise_wait_callgraph
     friend class promise;
     friend class future<T>;
     friend awaitable_poll;
+    friend wait_t;
     friend when_all_t;
     friend when_any_t;
 

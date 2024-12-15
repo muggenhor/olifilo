@@ -51,6 +51,7 @@ set_target_properties(
 target_sources(${PROJECT_NAME}
   PRIVATE
     src/coro/io_poll_context.cpp
+    src/coro/wait.cpp
     src/errors.cpp
     src/io/file_descriptor.cpp
 )
@@ -67,6 +68,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/coro/detail/promise.hpp
       include/olifilo/coro/io/file_descriptor.hpp
       include/olifilo/coro/io/types.hpp
+      include/olifilo/coro/wait.hpp
       include/olifilo/coro/when_all.hpp
       include/olifilo/coro/when_any.hpp
       include/olifilo/detail/small_vector.hpp

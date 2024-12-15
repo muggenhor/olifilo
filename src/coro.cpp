@@ -387,8 +387,19 @@ int main()
         }()
       , []() -> olifilo::future<std::vector<olifilo::expected<void>>> {
           auto ra = co_await when_any(std::array{
-              do_mqtt(3),
-              do_mqtt(4),
+              []() -> olifilo::future<void> {
+                auto ra = co_await when_all(std::array{
+                  do_mqtt(3),
+                  do_mqtt(4),
+                });
+                if (!ra)
+                  co_return {olifilo::unexpect, ra.error()};
+                for (auto& ri : *ra)
+                  if (!ri)
+                    co_return {olifilo::unexpect, ri.error()};
+
+                co_return {};
+              }(),
               olifilo::sleep(45s),
             });
           if (!ra)
