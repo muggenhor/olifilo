@@ -72,6 +72,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/coro/when_all.hpp
       include/olifilo/coro/when_any.hpp
       include/olifilo/detail/small_vector.hpp
+      include/olifilo/detail/variant_ptr.hpp
       include/olifilo/errors.hpp
       include/olifilo/io/connect.hpp
       include/olifilo/io/fcntl.hpp
@@ -121,4 +122,11 @@ if(BUILD_TESTING)
   target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
   target_compile_features(hmm PRIVATE cxx_std_23)
+
+  add_executable(test-variant-ptr)
+  target_sources(test-variant-ptr PRIVATE
+    tests/variant_ptr.cpp
+  )
+  target_link_libraries(test-variant-ptr PRIVATE ${PROJECT_NAME})
+  add_test(NAME test-variant-ptr COMMAND test-variant-ptr)
 endif()
