@@ -34,9 +34,6 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-template<class... Ts>
-struct overloaded : Ts... { using Ts::operator()...; };
-
 namespace olifilo
 {
 future<void> sleep_until(io::poll::timeout_clock::time_point time) noexcept

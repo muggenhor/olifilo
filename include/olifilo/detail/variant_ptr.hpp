@@ -302,6 +302,9 @@ class variant_ptr
 #endif
 };
 
+template<class... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+
 #if HAS_CONSTEXPR_POINTER_TAGGING_P3125
 #  define tag_assert(x) static_assert(x)
 #  define tag_constexpr constexpr
@@ -321,11 +324,14 @@ constexpr void test_variant_ptr()
   static constexpr auto is_nullptr = [] (auto p) { return p == nullptr; };
   static constexpr auto is_int_ptr = []<typename T>(T*) { return std::is_same_v<T, int>; };
   static constexpr auto is_voidpc_ptr = []<typename T>(T*) { return std::is_same_v<T, void* const>; };
-  static constexpr auto is_the_answer = []<typename T>(T* p) {
-    if constexpr (std::is_arithmetic_v<T>)
-      return p != nullptr && *p == 42;
-    return false;
-  };
+  static constexpr auto is_the_answer = overloaded{
+      []<typename T> requires(std::is_arithmetic_v<T>) (T* p) {
+        return p != nullptr && *p == 42;
+      },
+      [] (auto) {
+        return false;
+      },
+    };
 
   static constexpr test_ptr_t test_default_ptr;
   static_assert(test_default_ptr.index() == 0);
