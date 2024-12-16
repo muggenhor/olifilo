@@ -12,7 +12,7 @@ namespace olifilo
 {
 future<std::size_t>
   wait_t::operator()(
-    detail::sbo_vector<detail::promise_wait_callgraph*>&       promises
+    decltype(detail::promise_wait_callgraph::callees)&         promises
   , until                                                const wait_until
   , std::optional<std::chrono::steady_clock::time_point> const timeout
   ) noexcept
@@ -40,7 +40,7 @@ future<std::size_t>
     {
       unsafe_swap(callees_, futures_);
 
-      for (auto*& future : futures_)
+      for (auto& future : futures_)
       {
         // Hide our NOP future from callers and restore the nullptr they gave us
         if (future == &nop_always_ready_promise)
@@ -49,7 +49,8 @@ future<std::size_t>
           continue;
 
         // Restore promises to being the top of their respective await call graphs with nothing waiting on them (anymore)
-        future->waits_on_me = nullptr;
+        if (contains<detail::promise_wait_callgraph*>(future))
+          get<detail::promise_wait_callgraph*>(future)->waits_on_me = nullptr;
       }
     }
   } scope_exit(my_promise.callees, promises);
@@ -60,14 +61,16 @@ future<std::size_t>
 
   // Simulate promise.await_transform(promises)... We can't use co_await because it would wait on *all* promises (in order, one by one).
   const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
-  for (auto*& future : my_promise.callees)
+  for (auto& callee : my_promise.callees)
   {
+    const auto future = get<detail::promise_wait_callgraph*>(callee);
+
     if (const bool ready_input = future == nullptr;
         ready_input)
     {
       // const_cast is safe because this function takes care not to modify it through this list
       // And executors are only allowed to *remove* entries from the 'events' list, which for this NOP promise is empty.
-      future = const_cast<detail::promise_wait_callgraph*>(&nop_always_ready_promise);
+      callee = const_cast<detail::promise_wait_callgraph*>(&nop_always_ready_promise);
       continue;
     }
 
@@ -82,7 +85,7 @@ future<std::size_t>
     timeout_event.emplace(io::poll(*timeout));
     timeout_event->waiter = me;
 
-    if (auto r = my_promise.events.push_back(&*timeout_event, my_promise.alloc);
+    if (auto r = my_promise.callees.push_back(&*timeout_event, my_promise.alloc);
         !r)
       co_return {unexpect, r.error()};
   }
@@ -93,16 +96,24 @@ future<std::size_t>
 
   while (true)
   {
-    assert(std::ranges::empty(my_promise.events) && "TODO: test timeouts!");
+    assert(std::ranges::none_of(my_promise.callees,
+          [](auto c) {
+            return visit([]<class T>(T*) {
+                return std::is_same_v<T, detail::awaitable_poll>; }, c); }) && "TODO: test timeouts!");
 
     bool all_ready = true;
-    for (auto future = my_promise.callees.begin(); future != my_promise.callees.end(); ++future)
+    for (auto callee = my_promise.callees.begin(); callee != my_promise.callees.end(); ++callee)
     {
-      assert(ready(*future) || (*future)->waits_on_me == me);
+      if (*callee == &*timeout_event)
+        continue;
 
-      if (!ready(*future))
+      const auto future = get<detail::promise_wait_callgraph*>(*callee);
+
+      assert(ready(future) || future->waits_on_me == me);
+
+      if (!ready(future))
         all_ready = false;
-      else if (const auto index = static_cast<std::size_t>(future - my_promise.callees.begin());
+      else if (const auto index = static_cast<std::size_t>(callee - my_promise.callees.begin());
           wait_until == until::first_completed)
         co_return {std::in_place, index};
     }
@@ -116,7 +127,7 @@ future<std::size_t>
      && timeout_event->waiter == nullptr)
     {
       // Timeout occurred
-      assert(std::ranges::find(my_promise.events, &*timeout_event) == my_promise.events.end() && "executor should have removed timeout event from our wait list");
+      assert(std::ranges::find(my_promise.callees, &*timeout_event) == my_promise.callees.end() && "executor should have removed timeout event from our wait list");
       co_return {unexpect, timeout_event->wait_result.error()};
     }
   }

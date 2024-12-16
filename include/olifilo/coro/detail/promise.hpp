@@ -12,6 +12,7 @@
 #include "forward.hpp"
 
 #include <olifilo/detail/small_vector.hpp>
+#include <olifilo/detail/variant_ptr.hpp>
 #include <olifilo/expected.hpp>
 #include <olifilo/errors.hpp>
 #include <olifilo/io/poll.hpp>
@@ -36,9 +37,8 @@ struct promise_wait_callgraph
   using allocator_type = std::allocator<void*>;
 
   promise_wait_callgraph* caller = nullptr;
-  sbo_vector<promise_wait_callgraph*> callees;
+  sbo_vector<variant_ptr<promise_wait_callgraph, awaitable_poll>> callees;
   std::coroutine_handle<> waits_on_me;
-  sbo_vector<awaitable_poll*> events;
   [[no_unique_address]] allocator_type alloc;
 
   constexpr promise_wait_callgraph() noexcept = default;
@@ -47,10 +47,10 @@ struct promise_wait_callgraph
   {
     if (caller)
       erase(caller->callees, this);
-    for (auto* const callee : callees)
-      callee->caller = nullptr;
+    for (const auto& callee : callees)
+      if (contains<promise_wait_callgraph*>(callee))
+        get<promise_wait_callgraph*>(callee)->caller = nullptr;
     callees.destroy(alloc);
-    events.destroy(alloc);
   }
 
   promise_wait_callgraph(promise_wait_callgraph&&) = delete;
@@ -98,11 +98,11 @@ struct awaitable_poll : private io::poll
     assert(waiter == nullptr && "may only await once");
     waiter = suspended;
 
-    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->events, this->fd, this->waiter.address());
+    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->callees, this->fd, this->waiter.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
     auto& promise = suspended.promise();
-    if (auto r = promise.events.push_back(this, promise.alloc);
+    if (auto r = promise.callees.push_back(this, promise.alloc);
         !r)
     {
       wait_result = {unexpect, r.error()};

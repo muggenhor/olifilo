@@ -41,9 +41,9 @@ struct wait_t
    */
   future<std::size_t>
     static operator()(
-      detail::sbo_vector<detail::promise_wait_callgraph*>& promises
-    , until                                                wait_until
-    , std::optional<clock::time_point>                     timeout
+      decltype(detail::promise_wait_callgraph::callees)&        promises
+    , until                                                     wait_until
+    , std::optional<clock::time_point>                          timeout
     ) noexcept;
 
   template <typename... Ts>
@@ -66,10 +66,13 @@ struct wait_t
       }
     } scope_exit(my_promise.alloc, promises);
     {
-      if (auto r = promises.reserve(sizeof...(futures), my_promise.alloc);
+      if (auto r = promises.reserve(sizeof...(futures) + !!timeout, my_promise.alloc);
             !r)
         co_return {unexpect, r.error()};
-      (((void)promises.push_back(futures && !futures.done() ? &futures.handle.promise() : nullptr, my_promise.alloc)), ...);
+      (((void)promises.push_back(
+           static_cast<olifilo::detail::promise_wait_callgraph*>(
+             futures && !futures.done() ? &futures.handle.promise() : nullptr
+           ), my_promise.alloc)), ...);
     }
 
     co_return co_await wait_t::operator()(promises, wait_until, timeout);
@@ -121,12 +124,15 @@ struct wait_t
         promises_.destroy(alloc_);
       }
     } scope_exit(my_promise.alloc, promises);
-    if (auto r = promises.reserve(std::ranges::distance(first, last), my_promise.alloc);
+    if (auto r = promises.reserve(std::ranges::distance(first, last) + !!timeout, my_promise.alloc);
           !r)
       co_return {unexpect, r.error()};
 
     for (auto i = first; i != last; ++i)
-      (void)promises.push_back(*i && !i->done() ? &i->handle.promise() : nullptr, my_promise.alloc);
+      (void)promises.push_back(
+          static_cast<olifilo::detail::promise_wait_callgraph*>(
+            *i && !i->done() ? &i->handle.promise() : nullptr
+          ), my_promise.alloc);
 
     if (auto r = co_await wait_t::operator()(promises, wait_until, timeout);
         !r)
