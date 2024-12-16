@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <ranges>
 
 #include <olifilo/io/poll.hpp>
 
@@ -97,13 +96,14 @@ future<std::size_t>
     assert(std::ranges::empty(my_promise.events) && "TODO: test timeouts!");
 
     bool all_ready = true;
-    for (const auto [index, future] : my_promise.callees | std::views::enumerate)
+    for (auto future = my_promise.callees.begin(); future != my_promise.callees.end(); ++future)
     {
-      assert(ready(future) || future->waits_on_me == me);
+      assert(ready(*future) || (*future)->waits_on_me == me);
 
-      if (!ready(future))
+      if (!ready(*future))
         all_ready = false;
-      else if (wait_until == until::first_completed)
+      else if (const auto index = static_cast<std::size_t>(future - my_promise.callees.begin());
+          wait_until == until::first_completed)
         co_return {std::in_place, index};
     }
     if (all_ready)
