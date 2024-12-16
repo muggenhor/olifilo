@@ -294,6 +294,25 @@ class variant_ptr
       return std::bit_cast<std::uintptr_t>(_storage) == std::bit_cast<std::uintptr_t>(rhs._storage);
     }
 
+    template <typename T>
+      requires(find_type_index<T, Ts...> < sizeof...(Ts))
+    constexpr bool operator==(T* ptr) const noexcept
+    {
+      constexpr auto idx = find_type_index<T, Ts...>;
+
+      return index<idx>() == idx && get<idx>(*this) == ptr;
+    }
+
+    template <typename T>
+      requires(find_type_index<T, Ts...> >= sizeof...(Ts)
+            && find_type_index<std::remove_cv_t<T>, std::remove_cv_t<Ts>...> < sizeof...(Ts))
+    constexpr bool operator==(T* ptr) const noexcept
+    {
+      constexpr auto idx = find_type_index<std::remove_cv_t<T>, std::remove_cv_t<Ts>...>;
+
+      return index<idx>() == idx && get<idx>(*this) == ptr;
+    }
+
   private:
 #if HAVE_CONSTEXPR_CAST_FROM_VOID
     void* _storage = nullptr;
@@ -412,6 +431,9 @@ constexpr void test_variant_ptr()
   assert(get<const float*>(test_ptr) == &test_float);
   assert(nullptr != test_ptr);
   assert(visit(is_the_answer, test_ptr));
+
+  static constinit const int test_const_int = 21;
+  tag_assert(test_int_ptr != &test_const_int);
 }
 }  // namespace olifilo::detail
 
