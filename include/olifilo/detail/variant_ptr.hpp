@@ -80,15 +80,20 @@ requires(0 < sizeof...(Ts)
     && std::has_single_bit(std::min({alignof(Ts)...})))
 class variant_ptr
 {
+#if HAVE_CONSTEXPR_CAST_FROM_VOID
+    using storage_t = void*;
+#else
     using storage_t = pack_union<std::add_pointer_t<Ts>...>;
+#endif
     static constexpr std::uintptr_t mask = std::bit_ceil(static_cast<std::uintptr_t>(sizeof...(Ts))) - 1u;
 
   public:
-    constexpr variant_ptr() noexcept(
-        std::is_nothrow_constructible_v<storage_t, std::integral_constant<std::size_t, 0>, std::nullptr_t>)
+    constexpr variant_ptr() noexcept
+      : _storage(
 #if !HAVE_CONSTEXPR_CAST_FROM_VOID
-      : _storage(std::integral_constant<std::size_t, 0>(), nullptr)
+          std::integral_constant<std::size_t, 0>(),
 #endif
+          nullptr)
     {
     }
 
@@ -314,11 +319,7 @@ class variant_ptr
     }
 
   private:
-#if HAVE_CONSTEXPR_CAST_FROM_VOID
-    void* _storage = nullptr;
-#else
     storage_t _storage;
-#endif
 };
 
 template<class... Ts>
