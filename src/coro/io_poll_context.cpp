@@ -197,7 +197,7 @@ std::coroutine_handle<> pop_ready_completion_handler(promise_wait_callgraph& pol
             if (handler.wait_result.error() == error::uninitialized)
               return nullptr;
 
-            auto waiter = std::exchange(handler.waiter, nullptr);
+            auto waiter = std::exchange(handler.waits_on_me, nullptr);
             assert(waiter);
             polled.callees.erase(i);
             ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, i, waiter.address());

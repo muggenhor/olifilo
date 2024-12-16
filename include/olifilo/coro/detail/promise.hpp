@@ -64,7 +64,7 @@ struct awaitable_poll : private io::poll
   using poll::timeout;
 
   expected<void> wait_result = {unexpect, error::uninitialized};
-  std::coroutine_handle<> waiter;
+  std::coroutine_handle<> waits_on_me;
 
   // We need the location/address of this struct to be stable, so prohibit copying.
   // But we're still allowing the copy constructor to be callable (but *not* actually called!) by our factory function
@@ -95,10 +95,10 @@ struct awaitable_poll : private io::poll
   requires(std::is_base_of_v<promise_wait_callgraph, Promise>)
   std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> suspended) noexcept
   {
-    assert(waiter == nullptr && "may only await once");
-    waiter = suspended;
+    assert(waits_on_me == nullptr && "may only await once");
+    waits_on_me = suspended;
 
-    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waiter={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->callees, this->fd, this->waiter.address());
+    ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waits_on_me={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->callees, this->fd, this->waits_on_me.address());
 
     // NOTE: have to do this here, instead of await_transform, because we can only know the address of 'this' here
     auto& promise = suspended.promise();
@@ -106,7 +106,7 @@ struct awaitable_poll : private io::poll
         !r)
     {
       wait_result = {unexpect, r.error()};
-      return std::exchange(waiter, nullptr);
+      return std::exchange(waits_on_me, nullptr);
     }
 
     return std::noop_coroutine();

@@ -49,13 +49,17 @@ future<std::size_t>
           continue;
 
         // Restore promises to being the top of their respective await call graphs with nothing waiting on them (anymore)
-        if (contains<detail::promise_wait_callgraph*>(future))
-          get<detail::promise_wait_callgraph*>(future)->waits_on_me = nullptr;
+        visit([] (auto callee) { callee->waits_on_me = nullptr; }, future);
       }
     }
   } scope_exit(my_promise.callees, promises);
 
-  constexpr auto ready = [] (auto future) noexcept { return future->waits_on_me == nullptr; };
+  constexpr auto ready = []<typename T>(this auto self, T future) noexcept {
+    if constexpr (std::is_pointer_v<T>)
+      return future->waits_on_me == nullptr;
+    else
+      return visit(self, future);
+  };
 
   assert(ready(&nop_always_ready_promise));
 
@@ -63,6 +67,7 @@ future<std::size_t>
   const auto me = std::coroutine_handle<std::remove_cvref_t<decltype(my_promise)>>::from_promise(my_promise);
   for (auto& callee : my_promise.callees)
   {
+    assert(contains<detail::promise_wait_callgraph*>(callee));
     const auto future = get<detail::promise_wait_callgraph*>(callee);
 
     if (const bool ready_input = future == nullptr;
@@ -83,7 +88,7 @@ future<std::size_t>
   if (timeout)
   {
     timeout_event.emplace(io::poll(*timeout));
-    timeout_event->waiter = me;
+    timeout_event->waits_on_me = me;
 
     if (auto r = my_promise.callees.push_back(&*timeout_event, my_promise.alloc);
         !r)
@@ -96,22 +101,15 @@ future<std::size_t>
 
   while (true)
   {
-    assert(std::ranges::none_of(my_promise.callees,
-          [](auto c) {
-            return visit([]<class T>(T*) {
-                return std::is_same_v<T, detail::awaitable_poll>; }, c); }) && "TODO: test timeouts!");
-
     bool all_ready = true;
     for (auto callee = my_promise.callees.begin(); callee != my_promise.callees.end(); ++callee)
     {
+      // Timeout gets removed from the list by the executor when it becomes ready
+      // Skip it to prevent it from setting all_ready to 'false'
       if (*callee == &*timeout_event)
         continue;
 
-      const auto future = get<detail::promise_wait_callgraph*>(*callee);
-
-      assert(ready(future) || future->waits_on_me == me);
-
-      if (!ready(future))
+      if (!ready(*callee))
         all_ready = false;
       else if (const auto index = static_cast<std::size_t>(callee - my_promise.callees.begin());
           wait_until == until::first_completed)
@@ -124,7 +122,7 @@ future<std::size_t>
     co_await std::suspend_always();
 
     if (timeout_event
-     && timeout_event->waiter == nullptr)
+     && timeout_event->waits_on_me == nullptr)
     {
       // Timeout occurred
       assert(std::ranges::find(my_promise.callees, &*timeout_event) == my_promise.callees.end() && "executor should have removed timeout event from our wait list");

@@ -359,9 +359,8 @@ int main()
 
 #if 0
   if (auto r = when_any(std::array{
-        do_mqtt(0)
-      , olifilo::sleep(30s)
-      }).get();
+        do_mqtt(0),
+      }, 30s).get();
       !r)
     throw std::system_error(r.error());
   else if (auto ri = r->futures[r->index].get();
@@ -372,15 +371,15 @@ int main()
         do_mqtt(1)
       , []() -> olifilo::future<void> {
           auto ra = co_await when_any(
-              do_mqtt(2)
-            , olifilo::sleep(30s)
+              30s
+            , do_mqtt(2)
             );
-          if (!ra)
+          if (ra.error() == std::errc::timed_out)
+            co_return {};
+          else if (!ra)
             co_return {olifilo::unexpect, ra.error()};
-          if (ra->index == 0)
-            co_return co_await std::get<0>(ra->futures);
-          assert(ra->index == 1);
-          co_return co_await std::get<1>(ra->futures);
+          assert(ra->index == 0);
+          co_return co_await std::get<0>(ra->futures);
         }()
       , []() -> olifilo::future<std::vector<olifilo::expected<void>>> {
           auto ra = co_await when_any(std::array{
@@ -397,9 +396,10 @@ int main()
 
                 co_return {};
               }(),
-              olifilo::sleep(45s),
-            });
-          if (!ra)
+            }, 45s);
+          if (ra.error() == std::errc::timed_out)
+            co_return {std::in_place};
+          else if (!ra)
             co_return {olifilo::unexpect, ra.error()};
           std::vector<olifilo::expected<void>> rv;
           for (auto& fut: ra->futures)

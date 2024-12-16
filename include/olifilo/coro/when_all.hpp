@@ -21,29 +21,35 @@ namespace olifilo
 {
 struct when_all_t
 {
-  template <typename... Ts, std::size_t... Is>
+  template <detail::timeout Timeout, typename... Ts, std::size_t... Is>
   requires(sizeof...(Ts) == sizeof...(Is))
-  future<std::tuple<expected<Ts>...>> operator()(std::index_sequence<Is...>, future<Ts>&&... futures) const noexcept
+  future<std::tuple<expected<Ts>...>> operator()(std::index_sequence<Is...>, Timeout const timeout, future<Ts>&&... futures) const noexcept
   {
     // Take ownership of the futures *before* we first suspend to ensure they stay alive for the entire duration of this coroutine
     // Not taking them by value to ensure that allocation failure for the coroutine frame doesn't destroy them...
     std::tuple my_futures(std::move(futures)...);
-    if (const auto r = co_await wait(until::all_completed, std::get<Is>(my_futures)...);
+    if (const auto r = co_await wait(until::all_completed, timeout, std::get<Is>(my_futures)...);
         !r)
       co_return {unexpect, r.error()};
 
     co_return {std::in_place, (co_await std::get<Is>(my_futures))...};
   }
 
+  template <detail::timeout Timeout, typename... Ts>
+  future<std::tuple<expected<Ts>...>> operator()(Timeout const timeout, future<Ts>&&... futures) const noexcept
+  {
+    return (*this)(std::make_index_sequence<sizeof...(Ts)>(), timeout, std::move(futures)...);
+  }
+
   template <typename... Ts>
   future<std::tuple<expected<Ts>...>> operator()(future<Ts>&&... futures) const noexcept
   {
-    return (*this)(std::make_index_sequence<sizeof...(Ts)>(), std::move(futures)...);
+    return (*this)(std::optional<wait_t::clock::time_point>{std::nullopt}, std::move(futures)...);
   }
 
-  template <std::forward_iterator I, std::sentinel_for<I> S>
+  template <std::forward_iterator I, std::sentinel_for<I> S, detail::timeout Timeout = std::optional<wait_t::clock::time_point>>
   requires(is_future_v<std::iter_value_t<I>>)
-  future<std::vector<typename std::iter_value_t<I>::value_type>> operator()(I first, S last) const noexcept
+  future<std::vector<typename std::iter_value_t<I>::value_type>> operator()(I first, S last, Timeout const timeout) const noexcept
   {
     auto& my_promise = co_await detail::current_promise();
 
@@ -77,7 +83,7 @@ struct when_all_t
     for (; first != last; ++first)
       (void)my_futures.push_back(std::ranges::iter_move(first), my_promise.alloc);
 
-    if (const auto r = co_await wait(until::all_completed, my_futures);
+    if (const auto r = co_await wait(until::all_completed, my_futures, timeout);
         !r)
       co_return {unexpect, r.error()};
 
@@ -87,13 +93,13 @@ struct when_all_t
     co_return rv;
   }
 
-  template <std::ranges::forward_range R>
+  template <std::ranges::forward_range R, detail::timeout Timeout = std::optional<wait_t::clock::time_point>>
   requires(std::is_rvalue_reference_v<R&&>)
-  auto operator()(R&& futures) const noexcept
+  auto operator()(R&& futures, Timeout const timeout = {}) const noexcept
   {
     using std::ranges::begin;
     using std::ranges::end;
-    return (*this)(begin(futures), end(futures));
+    return (*this)(begin(futures), end(futures), timeout);
   }
 };
 

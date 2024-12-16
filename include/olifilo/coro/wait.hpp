@@ -3,6 +3,7 @@
 #pragma once
 
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <optional>
 #include <ranges>
@@ -12,6 +13,56 @@
 
 namespace olifilo
 {
+namespace detail
+{
+using wait_clock = std::chrono::steady_clock;
+
+template <typename T>
+constexpr bool is_time_point = false;
+
+template <typename Duration>
+constexpr bool is_time_point<std::chrono::time_point<wait_clock, Duration>> = true;
+
+template <typename T>
+constexpr bool is_time_point<std::optional<T>> = is_time_point<T>;
+
+template <typename T>
+constexpr bool is_duration = is_time_point<T>;
+
+template <typename Rep, typename Period>
+constexpr bool is_duration<std::chrono::duration<Rep, Period>> = true;
+
+template <typename T>
+constexpr bool is_duration<std::optional<T>> = is_duration<T>;
+
+template <typename T>
+constexpr bool is_timeout = is_time_point<T> || is_duration<T>;
+
+template <typename T>
+concept timeout = detail::is_timeout<T>;
+
+template <timeout Timeout>
+constexpr std::optional<wait_clock::time_point> to_timeout_point(Timeout timeout) noexcept
+{
+  if constexpr (detail::is_time_point<Timeout>)
+  {
+    return timeout;
+  }
+  else
+  {
+    if constexpr (std::constructible_from<bool, Timeout>)
+    {
+      if (timeout)
+        return wait_clock::now() + *timeout;
+    }
+    else
+    {
+      return wait_clock::now() + timeout;
+    }
+  }
+}
+};
+
 enum class until
 {
   all_completed,
@@ -20,7 +71,7 @@ enum class until
 
 struct wait_t
 {
-  using clock = std::chrono::steady_clock;
+  using clock = detail::wait_clock;
   using duration = clock::duration;
 
   /**
@@ -46,14 +97,15 @@ struct wait_t
     , std::optional<clock::time_point>                          timeout
     ) noexcept;
 
-  template <typename... Ts>
+  template <detail::timeout Timeout, typename... Ts>
   future<std::size_t>
     static constexpr operator()(
       until                            wait_until
-    , std::optional<clock::time_point> timeout
+    , Timeout                          timeout
     , future<Ts>&...                   futures
     ) noexcept
   {
+    auto my_timeout = detail::to_timeout_point(timeout);
     auto& my_promise = co_await detail::current_promise();
     decltype(my_promise.callees) promises;
     struct scope_exit
@@ -66,7 +118,7 @@ struct wait_t
       }
     } scope_exit(my_promise.alloc, promises);
     {
-      if (auto r = promises.reserve(sizeof...(futures) + !!timeout, my_promise.alloc);
+      if (auto r = promises.reserve(sizeof...(futures) + !!my_timeout, my_promise.alloc);
             !r)
         co_return {unexpect, r.error()};
       (((void)promises.push_back(
@@ -75,21 +127,7 @@ struct wait_t
            ), my_promise.alloc)), ...);
     }
 
-    co_return co_await wait_t::operator()(promises, wait_until, timeout);
-  }
-
-  template <typename... Ts>
-  future<std::size_t>
-    static constexpr operator()(
-      until                            wait_until
-    , std::optional<duration>          timeout
-    , future<Ts>&...                   futures
-    ) noexcept
-  {
-    std::optional<clock::time_point> final_time;
-    if (timeout)
-      final_time = clock::now() + *timeout;
-    return wait_t::operator()(wait_until, final_time, futures...);
+    co_return co_await wait_t::operator()(promises, wait_until, my_timeout);
   }
 
   template <typename... Ts>
@@ -102,7 +140,7 @@ struct wait_t
     return wait_t::operator()(wait_until, std::optional<clock::time_point>{std::nullopt}, futures...);
   }
 
-  template <std::forward_iterator I, std::sentinel_for<I> S>
+  template <std::forward_iterator I, std::sentinel_for<I> S, detail::timeout Timeout = std::optional<clock::time_point>>
   requires(is_future_v<std::iter_value_t<I>>
      && std::is_lvalue_reference_v<decltype(*std::declval<I>())>)
   future<I>
@@ -110,9 +148,10 @@ struct wait_t
       until                            wait_until
     , I                                first
     , S const                          last
-    , std::optional<clock::time_point> timeout = {}
+    , Timeout                          timeout = {}
     ) noexcept
   {
+    auto my_timeout = detail::to_timeout_point(timeout);
     auto& my_promise = co_await detail::current_promise();
     decltype(my_promise.callees) promises;
     struct scope_exit
@@ -124,7 +163,7 @@ struct wait_t
         promises_.destroy(alloc_);
       }
     } scope_exit(my_promise.alloc, promises);
-    if (auto r = promises.reserve(std::ranges::distance(first, last) + !!timeout, my_promise.alloc);
+    if (auto r = promises.reserve(std::ranges::distance(first, last) + !!my_timeout, my_promise.alloc);
           !r)
       co_return {unexpect, r.error()};
 
@@ -134,28 +173,11 @@ struct wait_t
             *i && !i->done() ? &i->handle.promise() : nullptr
           ), my_promise.alloc);
 
-    if (auto r = co_await wait_t::operator()(promises, wait_until, timeout);
+    if (auto r = co_await wait_t::operator()(promises, wait_until, my_timeout);
         !r)
       co_return {unexpect, r.error()};
     else
       co_return {std::in_place, std::next(std::move(first), *r)};
-  }
-
-  template <std::forward_iterator I, std::sentinel_for<I> S>
-  requires(is_future_v<std::iter_value_t<I>>
-     && std::is_lvalue_reference_v<decltype(*std::declval<I>())>)
-  future<I>
-    static constexpr operator()(
-      until                            wait_until
-    , I                                first
-    , S const                          last
-    , std::optional<duration>          timeout
-    ) noexcept
-  {
-    std::optional<clock::time_point> final_time;
-    if (timeout)
-      final_time = clock::now() + *timeout;
-    return wait_t::operator()(wait_until, first, last, final_time);
   }
 
   /**
@@ -163,29 +185,13 @@ struct wait_t
    * @param futures     set of futures to wait on
    * @param timeout     limit waiting to not exceed this time
    */
-  template <std::ranges::forward_range R>
+  template <std::ranges::forward_range R, detail::timeout Timeout = std::optional<clock::time_point>>
   requires(is_future_v<std::ranges::range_value_t<R>>)
   future<std::ranges::iterator_t<R>>
     static constexpr operator()(
       until                            wait_until
     , R&                               futures
-    , std::optional<clock::time_point> timeout = {}
-    ) noexcept
-  {
-    return wait_t::operator()(
-        wait_until
-      , std::ranges::begin(futures), std::ranges::end(futures)
-      , timeout
-      );
-  }
-
-  template <std::ranges::forward_range R>
-  requires(is_future_v<std::ranges::range_value_t<R>>)
-  future<std::ranges::iterator_t<R>>
-    static constexpr operator()(
-      until                            wait_until
-    , R&                               futures
-    , duration                         timeout
+    , Timeout                          timeout = {}
     ) noexcept
   {
     return wait_t::operator()(
