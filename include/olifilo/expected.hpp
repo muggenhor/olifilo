@@ -160,7 +160,7 @@ struct expected_storage
     if (rhs._error)
     {
       if constexpr (!std::is_trivially_destructible_v<T>)
-        if (_error)
+        if (!_error)
           std::destroy_at(&_value);
 
       _error = rhs._error;
