@@ -75,9 +75,7 @@ requires(!std::is_same_v<E, T>)
 constexpr std::size_t find_type_index<E, T, Ts...> = find_type_index<E, Ts...> + 1;
 
 template <typename... Ts>
-requires(0 < sizeof...(Ts)
-          && sizeof...(Ts) <= std::min({alignof(Ts)...})
-    && std::has_single_bit(std::min({alignof(Ts)...})))
+requires(0 < sizeof...(Ts))
 class variant_ptr
 {
 #if HAVE_CONSTEXPR_CAST_FROM_VOID
@@ -146,6 +144,11 @@ class variant_ptr
       {
         assert((std::bit_cast<std::uintptr_t>(ptr) & mask) == 0);
       }
+
+      // assertions purposefully inside the converting constructor because that's the only place where we can be sure to be dealing with *complete* types
+      // e.g. struct x { variant_ptr<x> y; }; might fail to compile otherwise
+      static_assert(sizeof...(Ts) <= std::min({alignof(Ts)...}), "too many items to fit in this alignment space");
+      static_assert(std::has_single_bit(std::min({alignof(Ts)...})), "we need to have a power of two available for alignment!");
     }
 
     template <std::size_t Idx = 0>
