@@ -228,6 +228,7 @@ struct expected_storage<void>
   };
 
   constexpr expected_storage() noexcept = default;
+  constexpr expected_storage(std::in_place_t) noexcept {}
 
   constexpr expected_storage(unexpect_t, int code, const std::error_category& category) noexcept
     : _error(code)
@@ -301,9 +302,8 @@ class [[nodiscard("error silently ignored")]] expected
 
     template <typename... Args>
     constexpr expected(std::in_place_t in_place, Args&&... args)
-      noexcept(std::is_nothrow_constructible_v<T, Args&&...>)
-      requires(!std::is_same_v<T, void>
-            && std::is_constructible_v<T, Args&&...>)
+      noexcept(std::is_nothrow_constructible_v<detail::expected_storage<T>, std::in_place_t, Args&&...>)
+      requires(std::is_constructible_v<detail::expected_storage<T>, std::in_place_t, Args&&...>)
       : _storage(in_place, std::forward<Args>(args)...)
     {
     }
