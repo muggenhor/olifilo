@@ -75,8 +75,10 @@ struct unexpected
 #endif
 };
 
+#if __cpp_lib_expected >= 202202L
 static_assert(std::is_convertible_v<unexpected<int>, std::unexpected<int>>);
 static_assert(std::is_constructible_v<std::unexpected<int>, unexpected<int>>);
+#endif
 
 inline constexpr unexpect_t unexpect;
 

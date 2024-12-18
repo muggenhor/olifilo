@@ -137,10 +137,12 @@ class promise final : private detail::promise_wait_callgraph
       {
         throw;
       }
+#if __cpp_lib_expected >= 202202L
       catch (std::bad_expected_access<std::error_code>& exc)
       {
         returned_value = {unexpect, exc.error()};
       }
+#endif
       catch (std::system_error& exc)
       {
         returned_value = {unexpect, exc.code()};
