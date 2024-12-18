@@ -222,6 +222,7 @@ struct expected_storage<void>
   int _error = 0;
   struct empty_t {
 #if __GNUC__ && (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__) <= 140200
+    // workaround for https://gcc.gnu.org/bugzilla/show_bug.cgi?id=118107
     // make non-empty on GCC <= 14.2 because it incorrectly causes warnings about the *inactive* member being uninitialized
     char _;
 #endif
