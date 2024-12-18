@@ -81,13 +81,8 @@ struct awaitable_poll : private io::poll
     return false;
   }
 
-  constexpr auto await_resume() const
+  constexpr auto await_resume() const noexcept
   {
-    // Simple cancellation implementation that'll propagate through the coroutine stack.
-    // It's caught by unhandled_exception and stored again as error_code there
-    if (!wait_result && wait_result.error() == std::errc::operation_canceled)
-      throw std::system_error(wait_result.error(), "io::poll");
-
     return std::move(wait_result);
   }
 
@@ -96,7 +91,6 @@ struct awaitable_poll : private io::poll
   std::coroutine_handle<> await_suspend(std::coroutine_handle<Promise> suspended) noexcept
   {
     assert(waits_on_me == nullptr && "may only await once");
-    waits_on_me = suspended;
 
     ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}(event@{}=({}, fd={}, waits_on_me={}))\n", ts(), __LINE__, "awaitable_poll::await_suspend", static_cast<const void*>(this), this->callees, this->fd, this->waits_on_me.address());
 
@@ -106,9 +100,10 @@ struct awaitable_poll : private io::poll
         !r)
     {
       wait_result = {unexpect, r.error()};
-      return std::exchange(waits_on_me, nullptr);
+      return suspended;
     }
 
+    waits_on_me = suspended;
     return std::noop_coroutine();
   }
 };
@@ -138,24 +133,17 @@ class promise final : private detail::promise_wait_callgraph
 
     constexpr void unhandled_exception() noexcept
     {
-      if constexpr (is_expected_with_std_error_code_v<T>)
+      try
       {
-        try
-        {
-          throw;
-        }
-        catch (std::bad_expected_access<std::error_code>& exc)
-        {
-          returned_value = {unexpect, exc.error()};
-        }
-        catch (std::system_error& exc)
-        {
-          returned_value = {unexpect, exc.code()};
-        }
+        throw;
       }
-      else
+      catch (std::bad_expected_access<std::error_code>& exc)
       {
-        std::terminate();
+        returned_value = {unexpect, exc.error()};
+      }
+      catch (std::system_error& exc)
+      {
+        returned_value = {unexpect, exc.code()};
       }
     }
 

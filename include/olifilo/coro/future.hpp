@@ -71,7 +71,7 @@ class [[nodiscard("future not awaited")]] future
       promise.waits_on_me = suspended;
     }
 
-    constexpr expected<T> await_resume(std::nothrow_t) noexcept
+    constexpr expected<T> await_resume() noexcept(std::is_nothrow_move_constructible_v<T>)
     {
       if (!handle)
         return {unexpect, make_error_code(error::future_already_retrieved)};
@@ -84,19 +84,7 @@ class [[nodiscard("future not awaited")]] future
       return rv;
     }
 
-    constexpr expected<T> await_resume()
-    {
-      auto rv = await_resume(std::nothrow);
-
-      // Simple cancellation implementation that'll propagate through the coroutine stack.
-      // It's caught by unhandled_exception and stored again as error_code there
-      if (!rv && rv.error() == std::errc::operation_canceled)
-        throw std::system_error(rv.error());
-
-      return rv;
-    }
-
-    expected<T> get() noexcept
+    expected<T> get() noexcept(std::is_nothrow_move_constructible_v<T>)
     {
       if (!handle)
         return {unexpect, make_error_code(error::future_already_retrieved)};
@@ -110,7 +98,7 @@ class [[nodiscard("future not awaited")]] future
           return {unexpect, err};
       }
 
-      return await_resume(std::nothrow);
+      return await_resume();
     }
 
   private:
