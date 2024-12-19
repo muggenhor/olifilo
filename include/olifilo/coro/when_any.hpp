@@ -33,7 +33,8 @@ struct when_any_t
 {
   template <detail::timeout Timeout, typename... Ts, std::size_t... Is>
   requires(sizeof...(Ts) == sizeof...(Is))
-  future<when_any_result<std::tuple<future<Ts>...>>> operator()(std::index_sequence<Is...>, Timeout timeout, future<Ts>&&... futures) const noexcept
+  future<when_any_result<std::tuple<future<Ts>...>>>
+    static constexpr _apply_with_indices(std::index_sequence<Is...>, Timeout timeout, future<Ts>&&... futures) noexcept
   {
     auto& my_promise = co_await detail::current_promise();
 
@@ -42,7 +43,7 @@ struct when_any_t
     // Not taking them by value to ensure that allocation failure for the coroutine frame doesn't destroy them...
     rv.emplace(std::move(futures)...);
 
-    if (const auto r = co_await wait(until::first_completed, timeout, std::get<Is>(rv->futures)...);
+    if (const auto r = co_await wait(until::first_completed, std::get<Is>(rv->futures)..., timeout);
         !r)
       co_return {unexpect, r.error()};
     else
@@ -51,16 +52,40 @@ struct when_any_t
     co_return rv;
   }
 
-  template <detail::timeout Timeout, typename... Ts>
-  future<when_any_result<std::tuple<future<Ts>...>>> operator()(Timeout timeout, future<Ts>&&... futures) const noexcept
+  template <typename... Ts>
+  requires(detail::timeout<detail::last_type_of<Ts&&...>>
+       && detail::all_are_future<detail::everything_except_last<std::decay_t<Ts>...>>)
+  auto
+    static constexpr operator()(Ts&&... futures_with_timeout_at_end) noexcept
   {
-    return (*this)(std::make_index_sequence<sizeof...(Ts)>(), timeout, std::move(futures)...);
+    return []<typename... NTs, std::size_t... NIs>(
+          std::index_sequence<NIs...> is
+        , detail::timeout auto timeout
+        , std::tuple<NTs&&...> futures) noexcept
+      {
+        return when_any_t::_apply_with_indices(
+            is
+          , timeout
+          // forward every parameter from the tuple for which we have an index
+          , std::get<NIs>(std::move(futures))...
+          );
+      }(
+        // ensure the last parameter in the pack doesn't have an index for it
+        std::make_index_sequence<sizeof...(Ts) - 1>()
+      , detail::forward_last(std::forward<Ts>(futures_with_timeout_at_end)...)
+      , std::forward_as_tuple(std::forward<Ts>(futures_with_timeout_at_end)...)
+      );
   }
 
   template <typename... Ts>
-  future<when_any_result<std::tuple<future<Ts>...>>> operator()(future<Ts>&&... futures) const noexcept
+  future<when_any_result<std::tuple<future<Ts>...>>>
+    static constexpr operator()(future<Ts>&&... futures) noexcept
   {
-    return (*this)(std::optional<wait_t::clock::time_point>{std::nullopt}, std::move(futures)...);
+    return when_all_t::_apply_with_indices(
+        std::make_index_sequence<sizeof...(Ts)>()
+      , std::optional<wait_t::clock::time_point>{std::nullopt}
+      , std::move(futures)...
+      );
   }
 
   template <std::forward_iterator I, std::sentinel_for<I> S, detail::timeout Timeout = std::optional<wait_t::clock::time_point>>

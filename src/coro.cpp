@@ -371,8 +371,8 @@ int main()
         do_mqtt(1)
       , []() -> olifilo::future<void> {
           auto ra = co_await when_any(
-              30s
-            , do_mqtt(2)
+              do_mqtt(2)
+            , 30s
             );
           if (ra.error() == std::errc::timed_out)
             co_return {};

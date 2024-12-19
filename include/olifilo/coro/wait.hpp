@@ -97,15 +97,16 @@ struct wait_t
     , std::optional<clock::time_point>                          timeout
     ) noexcept;
 
-  template <detail::timeout Timeout, typename... Ts>
+  template <typename... Ts>
+  requires(detail::timeout<detail::last_type_of<Ts...>>
+       && detail::all_are_future<detail::everything_except_last<Ts...>>)
   future<std::size_t>
     static constexpr operator()(
       until                            wait_until
-    , Timeout                          timeout
-    , future<Ts>&...                   futures
+    , Ts&...                           futures_with_timeout_at_end
     ) noexcept
   {
-    auto my_timeout = detail::to_timeout_point(timeout);
+    auto my_timeout = detail::to_timeout_point(detail::forward_last(futures_with_timeout_at_end...));
     auto& my_promise = co_await detail::current_promise();
     decltype(my_promise.callees) promises;
     struct scope_exit
@@ -118,13 +119,23 @@ struct wait_t
       }
     } scope_exit(my_promise.alloc, promises);
     {
-      if (auto r = promises.reserve(sizeof...(futures) + !!my_timeout, my_promise.alloc);
+      if (auto r = promises.reserve(sizeof...(futures_with_timeout_at_end) - (my_timeout ? 0 : 1), my_promise.alloc);
             !r)
         co_return {unexpect, r.error()};
-      (((void)promises.push_back(
-           static_cast<olifilo::detail::promise_wait_callgraph*>(
-             futures && !futures.done() ? &futures.handle.promise() : nullptr
-           ), my_promise.alloc)), ...);
+      [&promises, &my_promise]<typename... NTs, std::size_t... NIs>(
+            std::index_sequence<NIs...>
+          , std::tuple<NTs&...> futures) noexcept
+        {
+          // push every parameter from the tuple for which we have an index
+          (((void)promises.push_back(
+               static_cast<olifilo::detail::promise_wait_callgraph*>(
+                 std::get<NIs>(futures) && !std::get<NIs>(futures).done() ? &std::get<NIs>(futures).handle.promise() : nullptr
+               ), my_promise.alloc)), ...);
+        }(
+          // ensure the last parameter in the pack doesn't have an index for it
+          std::make_index_sequence<sizeof...(Ts) - 1>()
+        , std::forward_as_tuple(futures_with_timeout_at_end...)
+        );
     }
 
     co_return co_await wait_t::operator()(promises, wait_until, my_timeout);
@@ -137,7 +148,7 @@ struct wait_t
     , future<Ts>&...                   futures
     ) noexcept
   {
-    return wait_t::operator()(wait_until, std::optional<clock::time_point>{std::nullopt}, futures...);
+    return wait_t::operator()(wait_until, futures..., std::optional<clock::time_point>{std::nullopt});
   }
 
   template <std::forward_iterator I, std::sentinel_for<I> S, detail::timeout Timeout = std::optional<clock::time_point>>
