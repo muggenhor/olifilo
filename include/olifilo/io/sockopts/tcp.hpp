@@ -49,7 +49,7 @@ struct socket_opt<sol_ip_tcp::fastopen_connect>
 #endif
 
 template <>
-struct socket_opt<sol_ip_tcp::keep_alive_idle> : socket_opt_level<sol_ip_tcp>
+struct socket_opt<sol_ip_tcp::keep_alive_idle>
 {
   using type = int;
   using return_type =
@@ -73,7 +73,7 @@ struct socket_opt<sol_ip_tcp::keep_alive_idle> : socket_opt_level<sol_ip_tcp>
 };
 
 template <>
-struct socket_opt<sol_ip_tcp::keep_alive_interval> : socket_opt_level<sol_ip_tcp>
+struct socket_opt<sol_ip_tcp::keep_alive_interval>
 {
   using type = int;
   using return_type = std::chrono::duration<int>;
