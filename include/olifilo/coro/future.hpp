@@ -26,11 +26,8 @@ class [[nodiscard("future not awaited")]] future
 
     future& operator=(future&& rhs) noexcept
     {
-      if (&rhs != this)
-      {
-        destroy();
-        handle = std::exchange(rhs.handle, nullptr);
-      }
+      destroy();
+      handle = std::exchange(rhs.handle, nullptr);
 
       return *this;
     }
