@@ -50,15 +50,6 @@ class [[nodiscard("future not awaited")]] future
       return handle && handle.done();
     }
 
-    void destroy()
-    {
-      if (handle)
-      {
-        handle.destroy();
-        handle = nullptr;
-      }
-    }
-
     constexpr bool await_ready() const noexcept
     {
       return !handle || handle.done();
@@ -109,6 +100,15 @@ class [[nodiscard("future not awaited")]] future
     constexpr future(std::coroutine_handle<detail::promise<T>> handle) noexcept
       : handle(handle)
     {
+    }
+
+    constexpr void destroy()
+    {
+      if (handle)
+      {
+        handle.destroy();
+        handle = nullptr;
+      }
     }
 
     std::coroutine_handle<detail::promise<T>> handle;
