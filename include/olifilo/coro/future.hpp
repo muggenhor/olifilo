@@ -70,9 +70,17 @@ class [[nodiscard("future not awaited")]] future
       assert(handle.done());
       auto& promise = handle.promise();
 
-      expected<T> rv(std::move(promise.returned_value));
-      destroy();
-      return rv;
+      // Trick to keep guaranteed copy elision by not storing 'returned_value' in a local var first
+      struct scope_exit
+      {
+        future& self;
+        ~scope_exit()
+        {
+          self.destroy();
+        }
+      } scope_exit(*this);
+
+      return std::move(promise.returned_value);
     }
 
     expected<T> get() noexcept(std::is_nothrow_move_constructible_v<T>)
