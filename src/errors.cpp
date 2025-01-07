@@ -11,15 +11,17 @@ const char* error_category_t::name() const noexcept
 
 std::string error_category_t::message(int ev) const
 {
+  using enum error;
+
   switch (static_cast<error>(ev))
   {
-    case error::uninitialized:
+    case uninitialized:
       return "uninitialized";
-    case error::broken_promise:
+    case broken_promise:
       return "broken promise";
-    case error::future_already_retrieved:
+    case future_already_retrieved:
       return "future already retrieved";
-    case error::no_io_pending:
+    case no_io_pending:
       return "no pending I/O to wait on";
   }
 

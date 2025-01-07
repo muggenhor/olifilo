@@ -13,20 +13,22 @@ struct poll
 {
   using timeout_clock = std::chrono::steady_clock;
 
-  explicit constexpr poll(file_descriptor_handle fd, io::poll_event events) noexcept
+  using enum poll_event;
+
+  explicit constexpr poll(file_descriptor_handle fd, poll_event events) noexcept
     : fd(fd)
     , events(events)
   {
   }
 
-  explicit constexpr poll(file_descriptor_handle fd, io::poll_event events, timeout_clock::time_point timeout) noexcept
+  explicit constexpr poll(file_descriptor_handle fd, poll_event events, timeout_clock::time_point timeout) noexcept
     : fd(fd)
     , events(events)
     , timeout(timeout)
   {
   }
 
-  explicit constexpr poll(file_descriptor_handle fd, io::poll_event events, timeout_clock::duration timeout) noexcept
+  explicit constexpr poll(file_descriptor_handle fd, poll_event events, timeout_clock::duration timeout) noexcept
     : poll(fd, events, timeout_clock::now() + timeout)
   {
   }
@@ -42,7 +44,7 @@ struct poll
   }
 
   file_descriptor_handle fd;
-  io::poll_event events = static_cast<io::poll_event>(0);
+  poll_event events = static_cast<poll_event>(0);
   std::optional<timeout_clock::time_point> timeout;
 };
 }  // namespace olifilo::io

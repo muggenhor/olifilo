@@ -20,7 +20,7 @@ future<std::span<std::byte>> file_descriptor::read_some(std::span<std::byte> buf
   }
 
   co_return (
-      co_await io::poll(fd, io::poll_event::read)
+      co_await io::poll(fd, io::poll::read)
     ).and_then([=] { return io::read_some(fd, buf); });
 }
 
@@ -37,7 +37,7 @@ future<std::span<const std::byte>> file_descriptor::write_some(std::span<const s
   }
 
   co_return (
-      co_await io::poll(fd, io::poll_event::write)
+      co_await io::poll(fd, io::poll::write)
     ).and_then([=] { return io::write_some(fd, buf); });
 }
 
@@ -58,7 +58,7 @@ future<std::span<std::byte>> file_descriptor::read(std::span<std::byte> const bu
 
   while (read_so_far < buf.size())
   {
-    if (auto wait = co_await io::poll(fd, io::poll_event::read); !wait)
+    if (auto wait = co_await io::poll(fd, io::poll::read); !wait)
       co_return wait.error();
 
     if (auto rv = io::read(fd, buf.subspan(read_so_far)); !rv)
@@ -88,7 +88,7 @@ future<void> file_descriptor::write(std::span<const std::byte> buf, eagerness ea
 
   while (!buf.empty())
   {
-    if (auto wait = co_await io::poll(fd, io::poll_event::write); !wait)
+    if (auto wait = co_await io::poll(fd, io::poll::write); !wait)
       co_return wait;
 
     if (auto rv = io::write_some(fd, buf); !rv)

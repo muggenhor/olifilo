@@ -75,17 +75,17 @@ expected<unsigned> extract_events(promise_wait_callgraph& polled, ::fd_set& read
               return {std::in_place, 0};
 
             unsigned nfds = 0;
-            if (std::to_underlying(handler.events & io::poll_event::read))
+            if (std::to_underlying(handler.events & io::poll::read))
             {
               FD_SET(handler.fd, &readfds);
               nfds = handler.fd + 1;
             }
-            if (std::to_underlying(handler.events & io::poll_event::write))
+            if (std::to_underlying(handler.events & io::poll::write))
             {
               FD_SET(handler.fd, &writefds);
               nfds = handler.fd + 1;
             }
-            if (std::to_underlying(handler.events & io::poll_event::priority))
+            if (std::to_underlying(handler.events & io::poll::priority))
             {
               FD_SET(handler.fd, &exceptfds);
               nfds = handler.fd + 1;
@@ -156,9 +156,9 @@ void mark_events(promise_wait_callgraph& polled, const ::fd_set& readfds, const 
             if (!handler.fd)
               return;
 
-            if (!(std::to_underlying(handler.events & io::poll_event::read    ) && FD_ISSET(handler.fd, &readfds))
-             && !(std::to_underlying(handler.events & io::poll_event::write   ) && FD_ISSET(handler.fd, &writefds))
-             && !(std::to_underlying(handler.events & io::poll_event::priority) && FD_ISSET(handler.fd, &exceptfds)))
+            if (!(std::to_underlying(handler.events & io::poll::read    ) && FD_ISSET(handler.fd, &readfds))
+             && !(std::to_underlying(handler.events & io::poll::write   ) && FD_ISSET(handler.fd, &writefds))
+             && !(std::to_underlying(handler.events & io::poll::priority) && FD_ISSET(handler.fd, &exceptfds)))
               return;
 
             ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}](event@{}=({}, fd={}, timeout={}, waiter={}))\n", ts(), __LINE__, func_name, idx - 1, static_cast<const void*>(&handler), handler.events, handler.fd, handler.timeout.transform([&] (auto time) { return std::chrono::duration_cast<std::chrono::microseconds>(time - now); }), handler.waiter.address());
