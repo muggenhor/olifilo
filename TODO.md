@@ -4,6 +4,7 @@
 * Clean up friend status
 * Build & test on ESP32-C3 & ESP32-S3 with ESP-IDF >= 5.4 (has GCC 14 for C++23 deducing this)
 * Allocator support via `promise_type::operator new`
+* Track [Error on lambda NTTP argument to type constraint in template parameter list of generic lambda ](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116952)
 * Track [address computation for coroutine frame differs between BasePromise and MostDerivedPromise](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=118014)
     - having this fixed would allow earlier type erasure and as a result less instantiations of not-so-tiny template functions
     - example showing that GCC & Clang place overaligned promises at different offsets within coroutine frame than promises with `alignof(promise) <= alignof(void*)*2` while MSVC produces static offsets (independent of promise' alignment): https://godbolt.org/z/PbKaMP9cx
