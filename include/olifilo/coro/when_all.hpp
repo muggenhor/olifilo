@@ -80,15 +80,19 @@ struct when_all_t
 
     const auto count = std::ranges::distance(first, last);
     auto&& rv = std::move(my_promise.returned_value);
+#if __cpp_exceptions
     try
+#endif
     {
       rv.emplace();
       rv->reserve(count);
     }
+#if __cpp_exceptions
     catch (const std::bad_alloc&)
     {
       co_return {unexpect, make_error_code(std::errc::not_enough_memory)};
     }
+#endif
 
     detail::sbo_vector<std::iter_value_t<I>> my_futures;
     struct scope_exit

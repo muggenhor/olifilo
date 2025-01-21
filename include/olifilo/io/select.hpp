@@ -45,7 +45,7 @@ inline expected<unsigned> select(
 {
   struct ::timeval tv{
     .tv_sec = timeout.count() / 1000000L,
-    .tv_usec = timeout.count() % 1000000L,
+    .tv_usec = static_cast<suseconds_t>(timeout.count() % 1000000L),
   };
   return select(nfds, readfds, writefds, exceptfds, &tv);
 }

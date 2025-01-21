@@ -106,27 +106,29 @@ install(
   FILE_SET HEADERS
     COMPONENT Development
 )
-install(EXPORT
-  ${PROJECT_NAME}
-  FILE ${PROJECT_NAME}.cmake
-  NAMESPACE ${PROJECT_NAME}::
-  DESTINATION lib/cmake/${PROJECT_NAME}
-)
-
-if(BUILD_TESTING)
-  add_executable(hmm)
-  target_sources(hmm PRIVATE
-    src/coro.cpp
-    src/logging-stuff.hpp
+if(NOT DEFINED IDF_TARGET)
+  install(EXPORT
+    ${PROJECT_NAME}
+    FILE ${PROJECT_NAME}.cmake
+    NAMESPACE ${PROJECT_NAME}::
+    DESTINATION lib/cmake/${PROJECT_NAME}
   )
-  target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
-  target_compile_features(hmm PRIVATE cxx_std_23)
+  if(BUILD_TESTING)
+    add_executable(hmm)
+    target_sources(hmm PRIVATE
+      src/coro.cpp
+      src/logging-stuff.hpp
+    )
+    target_link_libraries(hmm PRIVATE ${PROJECT_NAME})
 
-  add_executable(test-variant-ptr)
-  target_sources(test-variant-ptr PRIVATE
-    tests/variant_ptr.cpp
-  )
-  target_link_libraries(test-variant-ptr PRIVATE ${PROJECT_NAME})
-  add_test(NAME test-variant-ptr COMMAND test-variant-ptr)
+    target_compile_features(hmm PRIVATE cxx_std_23)
+
+    add_executable(test-variant-ptr)
+    target_sources(test-variant-ptr PRIVATE
+      tests/variant_ptr.cpp
+    )
+    target_link_libraries(test-variant-ptr PRIVATE ${PROJECT_NAME})
+    add_test(NAME test-variant-ptr COMMAND test-variant-ptr)
+  endif()
 endif()

@@ -3,8 +3,13 @@
 {
   inputs.nixpkgs.url = "github:NixOS/nixpkgs";
   inputs.flake-utils.url = "github:numtide/flake-utils";
+  inputs.esp-idf-dev = {
+    url = "github:mirrexagon/nixpkgs-esp-dev";
+    inputs.nixpkgs.follows = "nixpkgs";
+    inputs.flake-utils.follows = "flake-utils";
+  };
 
-  outputs = inputs@{ self, flake-utils, nixpkgs, ... }:
+  outputs = inputs@{ self, esp-idf-dev, flake-utils, nixpkgs, ... }:
   flake-utils.lib.eachDefaultSystem (system:
   let
     versionOf = flake:
@@ -26,10 +31,13 @@
       if builtins.compareVersions "18" pkgs.llvmPackages.release_version <= 0
       then pkgs.llvmPackages
       else pkgs.llvmPackages_18;
-    olifilo = let
-      version = versionOf self;
-    in pkgs.stdenv.mkDerivation {
-      pname = "olifilo";
+    olifilo = pkgs.callPackage ({
+      version ? versionOf self,
+      prefix ? "",
+      compiler ? gcc,
+      toolchain ? [],
+    }: pkgs.stdenv.mkDerivation {
+      pname = "${prefix}olifilo";
       inherit version;
 
       src = ./.;
@@ -37,20 +45,43 @@
       nativeBuildInputs = [
         pkgs.cmake
         pkgs.ninja
-        gcc
+        compiler
       ];
 
       cmakeFlags = [
         "-DPROJECT_VER=${version}"
-      ];
+      ] ++ toolchain;
+
+      ${if self ? lastModified then "SOURCE_DATE_EPOCH" else null} = self.lastModified;
 
       cmakeBuildType = "Debug";
       doCheck = true;
+    }) {};
+    idf-olifilo = olifilo.overrideAttrs {
+      prePatch = ''
+        cd idf
+      '';
+
+      dontAutoPatchelf = true;
+      dontPatchELF = true;
+      dontStrip = true;
     };
   in {
     packages = {
       inherit olifilo;
       default = olifilo;
-    };
+    } // builtins.listToAttrs (
+      map (idf-target: {
+        name = "${idf-target}-olifilo";
+        value = idf-olifilo.override rec {
+          prefix = "${idf-target}-";
+          compiler = esp-idf-dev.packages.${system}."esp-idf-${idf-target}";
+          toolchain = [
+            "-DCMAKE_TOOLCHAIN_FILE=${compiler}/tools/cmake/toolchain-${idf-target}.cmake"
+            "-DIDF_TARGET=${idf-target}"
+          ];
+        };
+      }) [ "esp32" "esp32c2" "esp32c3" "esp32s2" "esp32s3" "esp32c6" "esp32h2" ]
+    );
   });
 }

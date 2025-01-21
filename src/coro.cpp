@@ -410,14 +410,22 @@ int main()
       }).get().value();
       !r1 || !r2 || !rs)
   {
+#if __cpp_exceptions
     throw std::system_error(!r1 ? r1.error() : !r2 ? r2.error() : rs.error());
+#else
+    std::abort();
+#endif
   }
   else
   {
     for (auto& ri : *rs)
     {
       if (!ri)
+#if __cpp_exceptions
         throw std::system_error(ri.error());
+#else
+        std::abort();
+#endif
     }
   }
 #endif

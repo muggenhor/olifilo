@@ -446,7 +446,11 @@ class [[nodiscard("error silently ignored")]] expected
     constexpr decltype(auto) value(this Self&& self)
     {
       if (!self)
+#if __cpp_exceptions
         throw std::system_error(self.error());
+#else
+      	std::abort();
+#endif
 
       if constexpr (!std::is_same_v<T, void>)
         return std::forward_like<Self>(self._storage._value);

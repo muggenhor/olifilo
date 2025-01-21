@@ -213,7 +213,9 @@ struct sbo_vector
       -> std::pair<typename traits_t::pointer, typename traits_t::size_type>
 #endif
     {
+#if __cpp_exceptions
       try
+#endif
       {
 #if __cpp_lib_allocate_at_least >= 202306L
         return traits_t::allocate_at_least(alloc_, count);
@@ -221,10 +223,12 @@ struct sbo_vector
         return {traits_t::allocate(alloc_, count), count};
 #endif
       }
+#if __cpp_exceptions
       catch (const std::bad_alloc&)
       {
         return {nullptr, 0};
       }
+#endif
     }();
 
     if (ptr == nullptr)
@@ -248,10 +252,13 @@ struct sbo_vector
       }
       else
       {
+#if __cpp_exceptions
         try
+#endif
         {
           std::uninitialized_construct_using_allocator(new_end, alloc_, std::move(*i));
         }
+#if __cpp_exceptions
         catch (...)
         {
           // Make an effort to move back the already moved elements for exception safety.
@@ -264,6 +271,7 @@ struct sbo_vector
           traits_t::deallocate(alloc_, ptr, size);
           throw;
         }
+#endif
       }
     }
     for (auto i = first; i != last; ++i)

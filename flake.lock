@@ -1,5 +1,28 @@
 {
   "nodes": {
+    "esp-idf-dev": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1737481223,
+        "narHash": "sha256-FJRJkdI+DNNp0OTHQXqYQnJOp3GS8x6Bl1uciBvuhfY=",
+        "owner": "mirrexagon",
+        "repo": "nixpkgs-esp-dev",
+        "rev": "f3434d1fd5a51ec325a085d2638e6c1b7c132e5b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mirrexagon",
+        "repo": "nixpkgs-esp-dev",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -35,6 +58,7 @@
     },
     "root": {
       "inputs": {
+        "esp-idf-dev": "esp-idf-dev",
         "flake-utils": "flake-utils",
         "nixpkgs": "nixpkgs"
       }
