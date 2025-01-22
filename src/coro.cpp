@@ -34,6 +34,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_log.h>
+#endif
+
 namespace olifilo
 {
 future<void> sleep_until(io::poll::timeout_clock::time_point time) noexcept
@@ -351,7 +355,11 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
   co_return err;
 }
 
+#ifdef ESP_PLATFORM
+int mqtt_main()
+#else
 int main()
+#endif
 {
   using namespace std::literals::chrono_literals;
   using olifilo::when_all;
@@ -362,10 +370,24 @@ int main()
         do_mqtt(0),
       }, 30s).get();
       !r)
+  {
+#if __cpp_exceptions
     throw std::system_error(r.error());
+#else
+    ESP_LOGE("olifilo-coro", "mqtt_main: error: %s", r.error().message().c_str());
+    std::abort();
+#endif
+  }
   else if (auto ri = r->futures[r->index].get();
       !ri)
+  {
+#if __cpp_exceptions
     throw std::system_error(ri.error());
+#else
+    ESP_LOGE("olifilo-coro", "mqtt_main: error(%u): %s", r->index, ri.error().message().c_str());
+    std::abort();
+#endif
+  }
 #else
   if (auto [r1, r2, rs] = std::apply(when_all, std::tuple{
         do_mqtt(1)
@@ -410,9 +432,11 @@ int main()
       }).get().value();
       !r1 || !r2 || !rs)
   {
+    auto err = !r1 ? r1.error() : !r2 ? r2.error() : rs.error();
 #if __cpp_exceptions
-    throw std::system_error(!r1 ? r1.error() : !r2 ? r2.error() : rs.error());
+    throw std::system_error(err);
 #else
+    ESP_LOGE("olifilo-coro", "mqtt_main: error: %s", err.message().c_str());
     std::abort();
 #endif
   }
@@ -421,12 +445,16 @@ int main()
     for (auto& ri : *rs)
     {
       if (!ri)
+      {
 #if __cpp_exceptions
         throw std::system_error(ri.error());
 #else
+        ESP_LOGE("olifilo-coro", "mqtt_main: error ri: %s", ri.error().message().c_str());
         std::abort();
 #endif
+      }
     }
   }
 #endif
+  return 0;
 }
