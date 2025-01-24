@@ -10,16 +10,34 @@
         ]
       },
       "locked": {
-        "lastModified": 1737481223,
-        "narHash": "sha256-FJRJkdI+DNNp0OTHQXqYQnJOp3GS8x6Bl1uciBvuhfY=",
-        "owner": "mirrexagon",
+        "lastModified": 1737740652,
+        "narHash": "sha256-xXIohp7eRKjgv24yrQxeIjsmIAG0QYhbvY1c2v9ZWXs=",
+        "owner": "muggenhor",
         "repo": "nixpkgs-esp-dev",
-        "rev": "f3434d1fd5a51ec325a085d2638e6c1b7c132e5b",
+        "rev": "afec83ad53e0e00cba0335663dd21e2ed4f53ff0",
         "type": "github"
       },
       "original": {
         "owner": "mirrexagon",
         "repo": "nixpkgs-esp-dev",
+        "type": "github"
+      }
+    },
+    "esp-qemu": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1737750036,
+        "narHash": "sha256-5sBFrzw4YrpxHXO9kpssZsDAa6Y1QUBVY87UlxD3hYs=",
+        "owner": "muggenhor",
+        "repo": "esp-qemu-nix",
+        "rev": "c4cd9c0b0de4ac976ed37f95b2e8c092933cc40b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "SFrijters",
+        "repo": "nix-qemu-espressif",
         "type": "github"
       }
     },
@@ -43,6 +61,21 @@
     },
     "nixpkgs": {
       "locked": {
+        "lastModified": 1737750418,
+        "narHash": "sha256-9LZsxCEI9/PlAi3gPII05EWdFf4z+3NimAQ3rNhhZmQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "a2bb144260817ba9d61e26f73c1059e99857bebc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
         "lastModified": 1727672256,
         "narHash": "sha256-9/79hjQc9+xyH+QxeMcRsA6hDyw6Z9Eo1/oxjvwirLk=",
         "owner": "NixOS",
@@ -59,8 +92,9 @@
     "root": {
       "inputs": {
         "esp-idf-dev": "esp-idf-dev",
+        "esp-qemu": "esp-qemu",
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs_2"
       }
     },
     "systems": {
