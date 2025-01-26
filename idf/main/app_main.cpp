@@ -11,6 +11,10 @@
 #include <esp_log.h>
 #include <esp_netif.h>
 #include <esp_vfs_eventfd.h>
+#include <esp_wifi.h>
+#include <esp_wifi_default.h>
+#include <nvs.h>
+#include <nvs_flash.h>
 #include <soc/soc.h>
 
 #include "../../src/coro.cpp"
@@ -156,6 +160,7 @@ struct networking
   std::unique_ptr<std::remove_pointer_t<esp_eth_netif_glue_handle_t>, esp::eth_deleter> eth_glue;
 #endif
 
+  struct wifi_event_sta_start_t {};
   struct eth_event_connected_t { void* driver; };
   struct eth_event_disconnected_t { void* driver; };
   struct event_queue_t
@@ -164,6 +169,9 @@ struct networking
         ip_event_got_ip_t
       , eth_event_connected_t
       , eth_event_disconnected_t
+      , wifi_event_sta_start_t
+      , wifi_event_sta_connected_t
+      , wifi_event_sta_disconnected_t
       >;
     std::vector<event_t> events;
     std::mutex event_lock;
@@ -196,6 +204,24 @@ struct networking
             break;
           case ETHERNET_EVENT_DISCONNECTED:
             self.events.emplace_back(std::in_place_type<eth_event_disconnected_t>, *static_cast<void* const*>(event_data));
+            break;
+
+          default:
+            return; // ignore
+        }
+      }
+      else if (event_base == WIFI_EVENT)
+      {
+        switch (static_cast<wifi_event_t>(event_id))
+        {
+          case WIFI_EVENT_STA_START:
+            self.events.emplace_back(std::in_place_type<wifi_event_sta_start_t>);
+            break;
+          case WIFI_EVENT_STA_CONNECTED:
+            self.events.emplace_back(std::in_place_type<wifi_event_sta_connected_t>, *static_cast<const wifi_event_sta_connected_t*>(event_data));
+            break;
+          case WIFI_EVENT_STA_DISCONNECTED:
+            self.events.emplace_back(std::in_place_type<wifi_event_sta_disconnected_t>, *static_cast<const wifi_event_sta_disconnected_t*>(event_data));
             break;
 
           default:
@@ -359,16 +385,54 @@ struct networking
       if (const auto status = ::esp_netif_attach(network.netif.get(), network.eth_glue.get()); status != ESP_OK)
         co_return {olifilo::unexpect, status, esp::error_category()};
     }
+    else
 #endif
+    {
+      network.netif.reset(esp_netif_create_default_wifi_sta());
+      if (!network.netif)
+        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+
+      {
+        const wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
+        if (const auto status = esp_wifi_init(&config); status != ESP_OK)
+          co_return {olifilo::unexpect, status, esp::error_category()};
+      }
+
+      if (const auto status = esp_wifi_set_mode(WIFI_MODE_STA); status != ESP_OK)
+        co_return {olifilo::unexpect, status, esp::error_category()};
+
+      {
+        wifi_config_t config = {
+          .sta = {
+            .ssid = "Tartarus",
+            .password = "password123!",
+            .scan_method = WIFI_ALL_CHANNEL_SCAN,     // Scan all channels instead of stopping after first match
+            .sort_method = WIFI_CONNECT_AP_BY_SIGNAL, // Sort by signal strength and keep up to 4 best APs
+            .threshold = { .authmode = WIFI_AUTH_WPA2_PSK, },
+          },
+        };
+
+        if (const auto status = esp_wifi_set_config(WIFI_IF_STA, &config); status != ESP_OK)
+          co_return {olifilo::unexpect, status, esp::error_category()};
+      }
+    }
 
     event_queue_t event_queue{std::nothrow};
     if (auto error = event_queue.init(); error)
       co_return {olifilo::unexpect, error};
 
 #if CONFIG_ETH_USE_OPENETH
-    if (const auto status = ::esp_eth_start(network.eth_handle.get()); status != ESP_OK)
-      co_return {olifilo::unexpect, status, esp::error_category()};
+    if (network.eth_handle)
+    {
+      if (const auto status = ::esp_eth_start(network.eth_handle.get()); status != ESP_OK)
+        co_return {olifilo::unexpect, status, esp::error_category()};
+    }
+    else
 #endif
+    {
+      if (const auto status = esp_wifi_start(); status != ESP_OK)
+        co_return {olifilo::unexpect, status, esp::error_category()};
+    }
 
     while (true)
     {
@@ -382,6 +446,33 @@ struct networking
         ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
         co_return network;
       }
+      else if (std::holds_alternative<wifi_event_sta_start_t>(*event))
+      {
+        ESP_LOGI(TAG, "%d", __LINE__);
+        if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
+          co_return {olifilo::unexpect, status, esp::error_category()};
+      }
+      else if (auto* wifi_event = std::get_if<wifi_event_sta_connected_t>(&*event))
+      {
+        ESP_LOGI(TAG, "Connected to: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx on channel %hhu"
+            , wifi_event->ssid_len, wifi_event->ssid
+            , wifi_event->bssid[0], wifi_event->bssid[1], wifi_event->bssid[2], wifi_event->bssid[3], wifi_event->bssid[4], wifi_event->bssid[5]
+            , wifi_event->channel
+            );
+      }
+      else if (auto* wifi_event = std::get_if<wifi_event_sta_disconnected_t>(&*event))
+      {
+        ESP_LOGI(TAG, "Disconnected from: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx because %hhu"
+            , wifi_event->ssid_len, wifi_event->ssid
+            , wifi_event->bssid[0], wifi_event->bssid[1], wifi_event->bssid[2], wifi_event->bssid[3], wifi_event->bssid[4], wifi_event->bssid[5]
+            , wifi_event->reason
+            );
+        if (wifi_event->reason != WIFI_REASON_ROAMING)
+        {
+          if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
+            co_return {olifilo::unexpect, status, esp::error_category()};
+        }
+      }
     }
   }
 };
@@ -391,6 +482,20 @@ extern int mqtt_main();
 
 extern "C" void app_main()
 {
+  // Initialize NVS partition
+  if (const std::error_code nvs_state{nvs_flash_init(), esp::error_category()}; nvs_state
+   && (nvs_state != std::errc::io_error))
+  {
+    ESP_LOGE(TAG, "nvs_flash_init: %s", nvs_state.message().c_str());
+    std::abort();
+  }
+  else if (nvs_state)
+  {
+    // NVS partition was truncated and needs to be erased
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ESP_ERROR_CHECK(nvs_flash_init());
+  }
+
   auto network = esp::networking::create().get();
   if (!network)
   {
