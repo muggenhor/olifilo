@@ -1,3 +1,6 @@
+#include <memory>
+#include <type_traits>
+
 #include <esp_err.h>
 #include <esp_eth.h>
 #include <esp_eth_mac.h>
@@ -5,8 +8,7 @@
 #include <esp_log.h>
 #include <esp_netif.h>
 #include <esp_vfs_eventfd.h>
-#include <memory>
-#include <type_traits>
+#include <soc/soc.h>
 
 #include "../../src/coro.cpp"
 
@@ -78,10 +80,12 @@ struct eth_deleter
 struct networking
 {
   std::unique_ptr<esp_netif_t, esp::eth_deleter> netif;
+#if CONFIG_ETH_USE_OPENETH
   std::unique_ptr<esp_eth_mac_t, esp::eth_deleter> mac;
   std::unique_ptr<esp_eth_phy_t, esp::eth_deleter> phy;
   std::unique_ptr<std::remove_pointer_t<esp_eth_handle_t>, esp::eth_deleter> eth_handle;
   std::unique_ptr<std::remove_pointer_t<esp_eth_netif_glue_handle_t>, esp::eth_deleter> eth_glue;
+#endif
 
   using eventfd_notify = olifilo::io::file_descriptor;
 
@@ -112,53 +116,72 @@ struct networking
 
     networking network;
 
-    {
-      esp_netif_inherent_config_t base_config = ESP_NETIF_INHERENT_DEFAULT_ETH();
-      // Warning: the interface desc is used in tests to capture actual connection details (IP, gw, mask)
-      base_config.if_desc = "openeth";
-      base_config.route_prio = 64;
-      esp_netif_config_t config = {
-          .base = &base_config,
-          .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH
-      };
-      network.netif.reset(esp_netif_new(&config));
-      if (!network.netif)
-        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
-    }
+#if CONFIG_ETH_USE_OPENETH
+#if !defined(DR_REG_EMAC_BASE) && (CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3)
+#  define DR_REG_EMAC_BASE            0x600CD000
+#endif
+#ifndef OPENETH_BASE
+#  define OPENETH_BASE                DR_REG_EMAC_BASE
+#endif
+#ifndef OPENETH_MODER_REG
+#  define OPENETH_MODER_REG           (OPENETH_BASE + 0x00)
+#endif
+#ifndef OPENETH_MODER_DEFAULT
+#  define OPENETH_MODER_DEFAULT       0xa000
+#endif
 
+    ESP_LOGD(TAG, "REG_READ(OPENETH_MODER_REG) (%#lx) == OPENETH_MODER_DEFAULT (%#x)", REG_READ(OPENETH_MODER_REG), OPENETH_MODER_DEFAULT);
+    if (REG_READ(OPENETH_MODER_REG) == OPENETH_MODER_DEFAULT)
     {
-      eth_mac_config_t config = ETH_MAC_DEFAULT_CONFIG();
-      config.rx_task_stack_size = 2048;
-      network.mac.reset(esp_eth_mac_new_openeth(&config));
-      if (!network.mac)
-        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
-    }
+      {
+        esp_netif_inherent_config_t base_config = ESP_NETIF_INHERENT_DEFAULT_ETH();
+        // Warning: the interface desc is used in tests to capture actual connection details (IP, gw, mask)
+        base_config.if_desc = "openeth";
+        base_config.route_prio = 64;
+        esp_netif_config_t config = {
+            .base = &base_config,
+            .stack = ESP_NETIF_NETSTACK_DEFAULT_ETH
+        };
+        network.netif.reset(esp_netif_new(&config));
+        if (!network.netif)
+          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+      }
 
-    {
-      eth_phy_config_t config = ETH_PHY_DEFAULT_CONFIG();
-      config.phy_addr = 1;
-      config.reset_gpio_num = 5;
-      config.autonego_timeout_ms = 100;
-      network.phy.reset(esp_eth_phy_new_dp83848(&config));
-      if (!network.phy)
-        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
-    }
+      {
+        eth_mac_config_t config = ETH_MAC_DEFAULT_CONFIG();
+        config.rx_task_stack_size = 2048;
+        network.mac.reset(esp_eth_mac_new_openeth(&config));
+        if (!network.mac)
+          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+      }
 
-    // Install Ethernet driver
-    {
-      esp_eth_config_t config = ETH_DEFAULT_CONFIG(network.mac.get(), network.phy.get());
-      esp_eth_handle_t handle;
-      if (const auto status = ::esp_eth_driver_install(&config, &handle); status != ESP_OK)
+      {
+        eth_phy_config_t config = ETH_PHY_DEFAULT_CONFIG();
+        config.phy_addr = 1;
+        config.reset_gpio_num = 5;
+        config.autonego_timeout_ms = 100;
+        network.phy.reset(esp_eth_phy_new_dp83848(&config));
+        if (!network.phy)
+          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+      }
+
+      // Install Ethernet driver
+      {
+        esp_eth_config_t config = ETH_DEFAULT_CONFIG(network.mac.get(), network.phy.get());
+        esp_eth_handle_t handle;
+        if (const auto status = ::esp_eth_driver_install(&config, &handle); status != ESP_OK)
+          co_return {olifilo::unexpect, status, esp::error_category()};
+        network.eth_handle.reset(handle);
+      }
+
+      // combine driver with netif
+      network.eth_glue.reset(esp_eth_new_netif_glue(network.eth_handle.get()));
+      if (!network.eth_glue)
+        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+      if (const auto status = ::esp_netif_attach(network.netif.get(), network.eth_glue.get()); status != ESP_OK)
         co_return {olifilo::unexpect, status, esp::error_category()};
-      network.eth_handle.reset(handle);
     }
-
-    // combine driver with netif
-    network.eth_glue.reset(esp_eth_new_netif_glue(network.eth_handle.get()));
-    if (!network.eth_glue)
-      co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
-    if (const auto status = ::esp_netif_attach(network.netif.get(), network.eth_glue.get()); status != ESP_OK)
-      co_return {olifilo::unexpect, status, esp::error_category()};
+#endif
 
     // Register user defined event handers
     eventfd_notify notifier{olifilo::io::file_descriptor_handle(eventfd(0, 0))};
@@ -174,8 +197,10 @@ struct networking
       }
     } scope_exit;
 
+#if CONFIG_ETH_USE_OPENETH
     if (const auto status = ::esp_eth_start(network.eth_handle.get()); status != ESP_OK)
       co_return {olifilo::unexpect, status, esp::error_category()};
+#endif
 
     std::uint64_t event;
     if (const auto r = co_await notifier.read(as_writable_bytes(std::span(&event, 1)), olifilo::eagerness::lazy); !r)
