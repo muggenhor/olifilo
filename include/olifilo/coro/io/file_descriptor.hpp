@@ -43,6 +43,13 @@ class file_descriptor
       return *this;
     }
 
+    file_descriptor& operator=(std::nullptr_t) noexcept
+    {
+      close();
+      _fd = nullptr;
+      return *this;
+    }
+
     void close() noexcept
     {
       if (_fd)
