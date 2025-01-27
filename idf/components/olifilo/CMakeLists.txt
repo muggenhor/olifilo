@@ -6,11 +6,14 @@ idf_component_register(
     esp_netif
     esp_wifi
     nvs_flash
+  REQUIRES
+    esp_event
   INCLUDE_DIRS
     include
   SRCS
     src/errors.cpp
+    src/event.cpp
 )
 
 add_subdirectory(olifilo)
-target_link_libraries(${COMPONENT_LIB} INTERFACE olifilo::olifilo)
+target_link_libraries(${COMPONENT_LIB} PUBLIC olifilo::olifilo)
