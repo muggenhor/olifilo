@@ -29,6 +29,10 @@ constexpr R decode_event(void* event_data)
 
 template <typename R, detail::EventIdEnum EventId, std::underlying_type_t<EventId> Base = detail::event_id<EventId>::min>
   requires(std::is_constructible_v<R, std::in_place_type_t<std::monostate>>)
+#if __GNUC__
+// Causes significant code reduction for large enums (400 bytes for WIFI_EVENT). Probably because it groups duplicate code
+__attribute__((__always_inline__))
+#endif
 constexpr R decode_event(EventId event_id, void* event_data)
 {
   if (std::to_underlying(event_id) < Base)
@@ -206,16 +210,77 @@ std::error_code event_queue::init() noexcept
   notifier = io::file_descriptor_handle(eventfd(0, 0));
   if (!notifier)
     return {errno, std::system_category()};
-  if (auto subscription = this->subscription.create(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, (esp_event_handler_t)&receive, this); !subscription)
-  {
-    notifier = nullptr;
-    return subscription.error();
-  }
-  else
-  {
-    this->subscription = std::move(*subscription);
-  }
-  return {};
+  // Subscribe to all event "bases" that we can store in event_id_t.
+  static constexpr auto subscribe = [](event_queue& queue, ::esp_event_base_t event_base, std::size_t index) -> std::error_code {
+    ESP_LOGD(TAG, "subscribing to all events for %s", event_base);
+    if (auto subscription = decltype(subscriptions)::value_type::create(
+          event_base
+        , ESP_EVENT_ANY_ID
+        , (esp_event_handler_t)&receive
+        , &queue); !subscription)
+    {
+      queue.notifier = nullptr;
+      return subscription.error();
+    }
+    else
+    {
+      queue.subscriptions[index] = std::move(*subscription);
+    }
+
+    return {};
+  };
+  static constexpr auto subscribe_all = []<std::size_t Base = 0, typename Self>(this Self&& self, event_queue& queue) __attribute__((__always_inline__)) -> std::error_code {
+    constexpr auto Max = std::variant_size_v<event_id_t>;
+
+    if constexpr (Base + 0 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 0, event_id_t>>::base, Base + 0))
+        return err;
+    }
+    if constexpr (Base + 1 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 1, event_id_t>>::base, Base + 1))
+        return err;
+    }
+    if constexpr (Base + 2 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 2, event_id_t>>::base, Base + 2))
+        return err;
+    }
+    if constexpr (Base + 3 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 3, event_id_t>>::base, Base + 3))
+        return err;
+    }
+    if constexpr (Base + 4 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 4, event_id_t>>::base, Base + 4))
+        return err;
+    }
+    if constexpr (Base + 5 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 5, event_id_t>>::base, Base + 5))
+        return err;
+    }
+    if constexpr (Base + 6 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 6, event_id_t>>::base, Base + 6))
+        return err;
+    }
+    if constexpr (Base + 7 < Max)
+    {
+      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 7, event_id_t>>::base, Base + 7))
+        return err;
+    }
+    if constexpr (Base + 8 < Max)
+    {
+      return std::forward<Self>(self).template operator()<Base + 8>(queue);
+    }
+
+    return {};
+  };
+
+  return subscribe_all(*this);
 }
 
 event_queue::event_queue()

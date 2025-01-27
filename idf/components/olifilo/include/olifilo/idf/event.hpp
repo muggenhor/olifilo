@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <mutex>
 #include <utility>
 #include <variant>
@@ -94,7 +95,7 @@ class event_queue
     std::vector<std::pair<event_id_t, event_t>> events;
     std::mutex event_lock;
     io::file_descriptor notifier;
-    event_subscription_default subscription;
+    std::array<event_subscription_default, std::variant_size_v<event_id_t>> subscriptions;
 
   public:
     std::error_code init() noexcept;
