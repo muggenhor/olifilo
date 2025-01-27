@@ -202,20 +202,21 @@ struct networking
       auto event = co_await event_queue.receive();
       if (!event)
         co_return {olifilo::unexpect, event.error()};
+      const auto& [event_id, event_data] = *event;
 
-      if (auto* ip_event = std::get_if<ip_event_got_ip_t>(&*event))
+      if (auto* ip_event = std::get_if<ip_event_got_ip_t>(&event_data))
       {
         const char* const desc = esp_netif_get_desc(ip_event->esp_netif);
         ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
         co_return network;
       }
-      else if (std::holds_alternative<olifilo::esp::wifi_event_sta_start_t>(*event))
+      else if (event_id == olifilo::esp::event_queue::event_id_t(::WIFI_EVENT_STA_START))
       {
         ESP_LOGI(TAG, "%d", __LINE__);
         if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
           co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
       }
-      else if (auto* wifi_event = std::get_if<wifi_event_sta_connected_t>(&*event))
+      else if (auto* wifi_event = std::get_if<wifi_event_sta_connected_t>(&event_data))
       {
         ESP_LOGI(TAG, "Connected to: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx on channel %hhu"
             , wifi_event->ssid_len, wifi_event->ssid
@@ -223,7 +224,7 @@ struct networking
             , wifi_event->channel
             );
       }
-      else if (auto* wifi_event = std::get_if<wifi_event_sta_disconnected_t>(&*event))
+      else if (auto* wifi_event = std::get_if<wifi_event_sta_disconnected_t>(&event_data))
       {
         ESP_LOGI(TAG, "Disconnected from: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx because %hhu"
             , wifi_event->ssid_len, wifi_event->ssid
