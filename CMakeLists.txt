@@ -106,7 +106,7 @@ install(
   FILE_SET HEADERS
     COMPONENT Development
 )
-if(NOT DEFINED IDF_TARGET)
+if(NOT DEFINED ESP_PLATFORM)
   install(EXPORT
     ${PROJECT_NAME}
     FILE ${PROJECT_NAME}.cmake

@@ -18,97 +18,14 @@
 #include <nvs_flash.h>
 #include <soc/soc.h>
 
+#include <olifilo/idf/errors.hpp>
+
 #include "../../src/coro.cpp"
 
 static constexpr char TAG[] = "olifilo-test";
 
 namespace esp
 {
-struct error_category_t : std::error_category
-{
-  const char* name() const noexcept override
-  {
-    return "esp-error";
-  }
-
-  std::string message(int ev) const override
-  {
-    return esp_err_to_name(ev);
-  }
-
-  bool equivalent(int code, const std::error_condition& condition) const noexcept override
-  {
-    switch (static_cast<::esp_err_t>(code))
-    {
-      case ESP_ERR_NO_MEM:
-        return condition == std::errc::not_enough_memory;
-      case ESP_ERR_INVALID_ARG:
-        return condition == std::errc::invalid_argument;
-      case ESP_ERR_NOT_FOUND:
-        return condition == std::errc::no_such_file_or_directory
-            || condition == std::errc::no_such_device_or_address
-            || condition == std::errc::no_such_device;
-      case ESP_ERR_NOT_SUPPORTED:
-        return condition == std::errc::not_supported;
-      case ESP_ERR_TIMEOUT:
-        return condition == std::errc::timed_out;
-      case ESP_ERR_INVALID_MAC:
-        return condition == std::errc::bad_address;
-      case ESP_ERR_NOT_FINISHED:
-        return condition == std::errc::operation_in_progress
-            || condition == std::errc::operation_would_block;
-      case ESP_ERR_NOT_ALLOWED:
-        return condition == std::errc::permission_denied;
-
-      case ESP_ERR_WIFI_TIMEOUT:
-        return condition == std::errc::timed_out;
-      case ESP_ERR_WIFI_WOULD_BLOCK:
-        return condition == std::errc::operation_would_block;
-      case ESP_ERR_WIFI_NOT_CONNECT:
-        return condition == std::errc::not_connected;
-
-      case ESP_ERR_ESP_NETIF_INVALID_PARAMS:
-        return condition == std::errc::invalid_argument;
-      case ESP_ERR_ESP_NETIF_NO_MEM:
-        return condition == std::errc::not_enough_memory;
-
-      case ESP_ERR_NVS_NOT_FOUND:
-        return condition == std::errc::no_such_file_or_directory;
-      case ESP_ERR_NVS_READ_ONLY:
-        return condition == std::errc::read_only_file_system;
-      case ESP_ERR_NVS_NOT_ENOUGH_SPACE:
-        return condition == std::errc::no_space_on_device;
-      case ESP_ERR_NVS_INVALID_HANDLE:
-        return condition == std::errc::bad_file_descriptor;
-      case ESP_ERR_NVS_KEY_TOO_LONG:
-        return condition == std::errc::filename_too_long;
-      case ESP_ERR_NVS_PAGE_FULL:
-        return condition == std::errc::no_space_on_device;
-      case ESP_ERR_NVS_INVALID_STATE:
-        return condition == std::errc::io_error;
-      case ESP_ERR_NVS_INVALID_LENGTH:
-        return condition == std::errc::no_buffer_space;
-      case ESP_ERR_NVS_NO_FREE_PAGES:
-        return condition == std::errc::io_error;
-      case ESP_ERR_NVS_VALUE_TOO_LONG:
-        return condition == std::errc::file_too_large;
-      case ESP_ERR_NVS_PART_NOT_FOUND:
-        return condition == std::errc::no_such_device;
-
-      case ESP_ERR_NVS_NEW_VERSION_FOUND:
-        return condition == std::errc::io_error;
-    }
-
-    return false;
-  }
-};
-
-constexpr const error_category_t& error_category() noexcept
-{
-  static error_category_t cat;
-  return cat;
-}
-
 struct eth_deleter
 {
   static void operator()(esp_netif_t* netif) noexcept
@@ -119,16 +36,16 @@ struct eth_deleter
   static olifilo::expected<void> operator()(esp_eth_handle_t handle) noexcept
   {
     if (const auto status = ::esp_eth_stop(handle); status != ESP_OK)
-      return {olifilo::unexpect, status, esp::error_category()};
+      return {olifilo::unexpect, status, olifilo::esp::error_category()};
     if (const auto status = ::esp_eth_driver_uninstall(handle); status != ESP_OK)
-      return {olifilo::unexpect, status, esp::error_category()};
+      return {olifilo::unexpect, status, olifilo::esp::error_category()};
     return {};
   }
 
   static olifilo::expected<void> operator()(esp_eth_netif_glue_handle_t glue) noexcept
   {
     if (const auto status = ::esp_eth_del_netif_glue(glue); status != ESP_OK)
-      return {olifilo::unexpect, status, esp::error_category()};
+      return {olifilo::unexpect, status, olifilo::esp::error_category()};
     return {};
   }
 
@@ -137,7 +54,7 @@ struct eth_deleter
     if (!mac)
       return {olifilo::unexpect, make_error_code(std::errc::invalid_argument)};
     if (const auto status = mac->del(mac); status != ESP_OK)
-      return {olifilo::unexpect, status, esp::error_category()};
+      return {olifilo::unexpect, status, olifilo::esp::error_category()};
     return {};
   }
 
@@ -146,7 +63,7 @@ struct eth_deleter
     if (!phy)
       return {olifilo::unexpect, make_error_code(std::errc::invalid_argument)};
     if (const auto status = phy->del(phy); status != ESP_OK)
-      return {olifilo::unexpect, status, esp::error_category()};
+      return {olifilo::unexpect, status, olifilo::esp::error_category()};
     return {};
   }
 };
@@ -181,7 +98,7 @@ class event_subscription_default
     {
       ::esp_event_handler_instance_t subscription;
       if (const auto status = ::esp_event_handler_instance_register(event_base, event_id, event_handler, event_handler_arg, &subscription); status != ESP_OK)
-        return {olifilo::unexpect, status, esp::error_category()};
+        return {olifilo::unexpect, status, olifilo::esp::error_category()};
       return event_subscription_default(event_base, event_id, subscription);
     }
 
@@ -320,12 +237,12 @@ struct networking
         else if (r->size_bytes() != sizeof(event_count))
         {
           ESP_LOGE(TAG, "event_count size: %u", r->size_bytes());
-          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
         }
         else if (event_count <= 0)
         {
           ESP_LOGE(TAG, "event_count: %llu", event_count);
-          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
         }
         ESP_LOGD(TAG, "%s: received %lu events", __PRETTY_FUNCTION__, static_cast<std::uint32_t>(event_count));
       }
@@ -369,14 +286,14 @@ struct networking
   static olifilo::future<networking> create() noexcept
   {
     if (const auto status = ::esp_event_loop_create_default(); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-      co_return {olifilo::unexpect, status, esp::error_category()};
+      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     if (const auto status = ::esp_netif_init(); status != ESP_OK)
-      co_return {olifilo::unexpect, status, esp::error_category()};
+      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
 
     {
       constexpr auto config = ESP_VFS_EVENTD_CONFIG_DEFAULT();
       if (const auto status = ::esp_vfs_eventfd_register(&config); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-        co_return {olifilo::unexpect, status, esp::error_category()};
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
 
     networking network;
@@ -409,7 +326,7 @@ struct networking
         };
         network.netif.reset(esp_netif_new(&config));
         if (!network.netif)
-          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
       }
 
       {
@@ -417,7 +334,7 @@ struct networking
         config.rx_task_stack_size = 2048;
         network.mac.reset(esp_eth_mac_new_openeth(&config));
         if (!network.mac)
-          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
       }
 
       {
@@ -427,7 +344,7 @@ struct networking
         config.autonego_timeout_ms = 100;
         network.phy.reset(esp_eth_phy_new_dp83848(&config));
         if (!network.phy)
-          co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
       }
 
       // Install Ethernet driver
@@ -435,32 +352,32 @@ struct networking
         esp_eth_config_t config = ETH_DEFAULT_CONFIG(network.mac.get(), network.phy.get());
         esp_eth_handle_t handle;
         if (const auto status = ::esp_eth_driver_install(&config, &handle); status != ESP_OK)
-          co_return {olifilo::unexpect, status, esp::error_category()};
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
         network.eth_handle.reset(handle);
       }
 
       // combine driver with netif
       network.eth_glue.reset(esp_eth_new_netif_glue(network.eth_handle.get()));
       if (!network.eth_glue)
-        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+        co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
       if (const auto status = ::esp_netif_attach(network.netif.get(), network.eth_glue.get()); status != ESP_OK)
-        co_return {olifilo::unexpect, status, esp::error_category()};
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
     else
 #endif
     {
       network.netif.reset(esp_netif_create_default_wifi_sta());
       if (!network.netif)
-        co_return {olifilo::unexpect, ESP_FAIL, esp::error_category()};
+        co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
 
       {
         const wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
         if (const auto status = esp_wifi_init(&config); status != ESP_OK)
-          co_return {olifilo::unexpect, status, esp::error_category()};
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
       }
 
       if (const auto status = esp_wifi_set_mode(WIFI_MODE_STA); status != ESP_OK)
-        co_return {olifilo::unexpect, status, esp::error_category()};
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
 
       {
         wifi_config_t config = {
@@ -474,7 +391,7 @@ struct networking
         };
 
         if (const auto status = esp_wifi_set_config(WIFI_IF_STA, &config); status != ESP_OK)
-          co_return {olifilo::unexpect, status, esp::error_category()};
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
       }
     }
 
@@ -486,13 +403,13 @@ struct networking
     if (network.eth_handle)
     {
       if (const auto status = ::esp_eth_start(network.eth_handle.get()); status != ESP_OK)
-        co_return {olifilo::unexpect, status, esp::error_category()};
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
     else
 #endif
     {
       if (const auto status = esp_wifi_start(); status != ESP_OK)
-        co_return {olifilo::unexpect, status, esp::error_category()};
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
 
     while (true)
@@ -511,7 +428,7 @@ struct networking
       {
         ESP_LOGI(TAG, "%d", __LINE__);
         if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
-          co_return {olifilo::unexpect, status, esp::error_category()};
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
       }
       else if (auto* wifi_event = std::get_if<wifi_event_sta_connected_t>(&*event))
       {
@@ -531,7 +448,7 @@ struct networking
         if (wifi_event->reason != WIFI_REASON_ROAMING)
         {
           if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
-            co_return {olifilo::unexpect, status, esp::error_category()};
+            co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
         }
       }
     }
@@ -544,7 +461,7 @@ extern int mqtt_main();
 extern "C" void app_main()
 {
   // Initialize NVS partition
-  if (const std::error_code nvs_state{nvs_flash_init(), esp::error_category()}; nvs_state
+  if (const std::error_code nvs_state{nvs_flash_init(), olifilo::esp::error_category()}; nvs_state
    && (nvs_state != std::errc::io_error))
   {
     ESP_LOGE(TAG, "nvs_flash_init: %s", nvs_state.message().c_str());
