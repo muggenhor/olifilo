@@ -7,6 +7,5 @@ idf_component_register(
     log
     nvs_flash
     olifilo
-    vfs
 )
 idf_build_set_property(COMPILE_OPTIONS "-Wno-missing-field-initializers" APPEND)

@@ -1,9 +1,7 @@
 #include <memory>
-#include <mutex>
 #include <type_traits>
 #include <utility>
 #include <variant>
-#include <vector>
 
 #include <esp_err.h>
 #include <esp_eth.h>
@@ -11,7 +9,6 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_netif.h>
-#include <esp_vfs_eventfd.h>
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
 #include <nvs.h>
@@ -79,164 +76,14 @@ struct networking
   std::unique_ptr<std::remove_pointer_t<esp_eth_netif_glue_handle_t>, esp::eth_deleter> eth_glue;
 #endif
 
-  struct wifi_event_sta_start_t {};
-  struct eth_event_connected_t { void* driver; };
-  struct eth_event_disconnected_t { void* driver; };
-  struct event_queue_t
-  {
-    using event_t = std::variant<
-        ip_event_got_ip_t
-      , eth_event_connected_t
-      , eth_event_disconnected_t
-      , wifi_event_sta_start_t
-      , wifi_event_sta_connected_t
-      , wifi_event_sta_disconnected_t
-      >;
-    std::vector<event_t> events;
-    std::mutex event_lock;
-    olifilo::io::file_descriptor notifier;
-    olifilo::esp::event_subscription_default subscription;
-
-    static void receive(void* arg, esp_event_base_t event_base, std::int32_t event_id, void* event_data) noexcept
-    {
-      auto&& self = *static_cast<event_queue_t*>(arg);
-      std::scoped_lock _(self.event_lock);
-      if (event_base == IP_EVENT)
-      {
-        switch (static_cast<ip_event_t>(event_id))
-        {
-          case IP_EVENT_STA_GOT_IP:
-          case IP_EVENT_ETH_GOT_IP:
-          case IP_EVENT_PPP_GOT_IP:
-            self.events.emplace_back(std::in_place_type<ip_event_got_ip_t>, *static_cast<const ip_event_got_ip_t*>(event_data));
-            break;
-
-          default:
-            return; // ignore
-        }
-      }
-      else if (event_base == ETH_EVENT)
-      {
-        switch (static_cast<eth_event_t>(event_id))
-        {
-          case ETHERNET_EVENT_CONNECTED:
-            self.events.emplace_back(std::in_place_type<eth_event_connected_t>, *static_cast<void* const*>(event_data));
-            break;
-          case ETHERNET_EVENT_DISCONNECTED:
-            self.events.emplace_back(std::in_place_type<eth_event_disconnected_t>, *static_cast<void* const*>(event_data));
-            break;
-
-          default:
-            return; // ignore
-        }
-      }
-      else if (event_base == WIFI_EVENT)
-      {
-        switch (static_cast<wifi_event_t>(event_id))
-        {
-          case WIFI_EVENT_STA_START:
-            self.events.emplace_back(std::in_place_type<wifi_event_sta_start_t>);
-            break;
-          case WIFI_EVENT_STA_CONNECTED:
-            self.events.emplace_back(std::in_place_type<wifi_event_sta_connected_t>, *static_cast<const wifi_event_sta_connected_t*>(event_data));
-            break;
-          case WIFI_EVENT_STA_DISCONNECTED:
-            self.events.emplace_back(std::in_place_type<wifi_event_sta_disconnected_t>, *static_cast<const wifi_event_sta_disconnected_t*>(event_data));
-            break;
-
-          default:
-            return; // ignore
-        }
-      }
-      else
-      {
-        return;
-      }
-
-      const std::uint64_t eventnum = 1;
-      self.notifier.write(as_bytes(std::span(&eventnum, 1))).get().value();
-    }
-
-    olifilo::future<event_t> receive() noexcept
-    {
-      assert(notifier && "used nothrow constructor without calling init()!");
-
-      while (true)
-      {
-        {
-          std::scoped_lock _(event_lock);
-          if (!events.empty())
-          {
-            auto rv = events.front();
-            events.erase(events.begin());
-            co_return rv;
-          }
-        }
-
-        std::uint64_t event_count;
-        if (const auto r = co_await notifier.read(as_writable_bytes(std::span(&event_count, 1)), olifilo::eagerness::lazy); !r)
-          co_return {olifilo::unexpect, r.error()};
-        else if (r->size_bytes() != sizeof(event_count))
-        {
-          ESP_LOGE(TAG, "event_count size: %u", r->size_bytes());
-          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
-        }
-        else if (event_count <= 0)
-        {
-          ESP_LOGE(TAG, "event_count: %llu", event_count);
-          co_return {olifilo::unexpect, ESP_FAIL, olifilo::esp::error_category()};
-        }
-        ESP_LOGD(TAG, "%s: received %lu events", __PRETTY_FUNCTION__, static_cast<std::uint32_t>(event_count));
-      }
-    }
-
-    std::error_code init() noexcept
-    {
-      if (notifier)
-        return {};
-
-      notifier = olifilo::io::file_descriptor_handle(eventfd(0, 0));
-      if (!notifier)
-        return {errno, std::system_category()};
-      if (auto subscription = this->subscription.create(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, (esp_event_handler_t)&receive, this); !subscription)
-      {
-        notifier = nullptr;
-        return subscription.error();
-      }
-      else
-      {
-        this->subscription = std::move(*subscription);
-      }
-      return {};
-    }
-
-    event_queue_t()
-    {
-      if (auto error = init())
-#if __cpp_exceptions
-        throw std::system_error(error);
-#else
-      	std::abort();
-#endif
-    }
-
-    constexpr event_queue_t(std::nothrow_t) noexcept
-    {
-    }
-  };
-
   static olifilo::future<networking> create() noexcept
   {
-    if (const auto status = ::esp_event_loop_create_default(); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+    olifilo::esp::event_queue event_queue{std::nothrow};
+    if (auto error = event_queue.init(); error)
+      co_return {olifilo::unexpect, error};
+
     if (const auto status = ::esp_netif_init(); status != ESP_OK)
       co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-
-    {
-      constexpr auto config = ESP_VFS_EVENTD_CONFIG_DEFAULT();
-      if (const auto status = ::esp_vfs_eventfd_register(&config); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-    }
 
     networking network;
 
@@ -337,10 +184,6 @@ struct networking
       }
     }
 
-    event_queue_t event_queue{std::nothrow};
-    if (auto error = event_queue.init(); error)
-      co_return {olifilo::unexpect, error};
-
 #if CONFIG_ETH_USE_OPENETH
     if (network.eth_handle)
     {
@@ -366,7 +209,7 @@ struct networking
         ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
         co_return network;
       }
-      else if (std::holds_alternative<wifi_event_sta_start_t>(*event))
+      else if (std::holds_alternative<olifilo::esp::wifi_event_sta_start_t>(*event))
       {
         ESP_LOGI(TAG, "%d", __LINE__);
         if (const auto status = ::esp_wifi_connect(); status != ESP_OK)

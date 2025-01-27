@@ -2,9 +2,18 @@
 
 #pragma once
 
-#include <olifilo/expected.hpp>
+#include <mutex>
+#include <variant>
+#include <vector>
 
+#include <olifilo/expected.hpp>
+#include <olifilo/coro/future.hpp>
+#include <olifilo/coro/io/file_descriptor.hpp>
+
+#include <esp_eth_com.h>
 #include <esp_event_base.h>
+#include <esp_netif_types.h>
+#include <esp_wifi_types_generic.h>
 
 namespace olifilo::esp
 {
@@ -61,5 +70,35 @@ class event_subscription_default
       if (subscription)
         static_cast<void>(destroy());
     }
+};
+
+struct wifi_event_sta_start_t {};
+struct eth_event_connected_t { void* driver; };
+struct eth_event_disconnected_t { void* driver; };
+class event_queue
+{
+  private:
+    using event_t = std::variant<
+        ip_event_got_ip_t
+      , eth_event_connected_t
+      , eth_event_disconnected_t
+      , wifi_event_sta_start_t
+      , wifi_event_sta_connected_t
+      , wifi_event_sta_disconnected_t
+      >;
+    std::vector<event_t> events;
+    std::mutex event_lock;
+    io::file_descriptor notifier;
+    event_subscription_default subscription;
+
+  public:
+    std::error_code init() noexcept;
+    event_queue();
+    constexpr event_queue(std::nothrow_t) noexcept {} // need to call init() after this constructor!
+
+    future<event_t> receive() noexcept;
+
+  private:
+    static void receive(void* arg, esp_event_base_t event_base, std::int32_t event_id, void* event_data) noexcept;
 };
 }  // namespace olifilo::esp
