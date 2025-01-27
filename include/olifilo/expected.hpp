@@ -106,6 +106,15 @@ struct expected_storage
     : _error(code)
     , _error_cat(&category)
   {
+    if constexpr (std::is_nothrow_default_constructible_v<T>)
+    {
+      if (code == 0)
+        std::construct_at(&_value);
+    }
+    else
+    {
+      assert(code != 0 || "value type isn't nothrow default constructible!");
+    }
   }
 
   constexpr ~expected_storage()
@@ -281,9 +290,8 @@ class [[nodiscard("error silently ignored")]] expected
     constexpr expected()
       noexcept(std::is_same_v<T, void> || std::is_nothrow_default_constructible_v<T>)
       requires(std::is_same_v<T, void> || std::is_default_constructible_v<T>)
+      : expected(std::in_place)
     {
-      if constexpr (!std::is_same_v<T, void>)
-        std::construct_at(&_storage._value);
     }
 
     constexpr expected(unexpect_t unexpect, int code, const std::error_category& category) noexcept
