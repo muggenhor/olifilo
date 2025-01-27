@@ -1,6 +1,7 @@
 #include <memory>
 #include <mutex>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -150,6 +151,65 @@ struct eth_deleter
   }
 };
 
+class event_subscription_default
+{
+  private:
+    ::esp_event_base_t event_base = nullptr;
+    std::int32_t event_id = -1;
+    ::esp_event_handler_instance_t subscription = nullptr;
+
+    constexpr event_subscription_default(
+        ::esp_event_base_t event_base
+      , std::int32_t event_id
+      , ::esp_event_handler_instance_t subscription
+      ) noexcept
+      : event_base{event_base}
+      , event_id{event_id}
+      , subscription{subscription}
+    {
+    }
+
+  public:
+    event_subscription_default() = default;
+
+    static olifilo::expected<event_subscription_default> create(
+        ::esp_event_base_t event_base
+      , std::int32_t event_id
+      , ::esp_event_handler_t event_handler
+      , void* event_handler_arg
+      ) noexcept
+    {
+      ::esp_event_handler_instance_t subscription;
+      if (const auto status = ::esp_event_handler_instance_register(event_base, event_id, event_handler, event_handler_arg, &subscription); status != ESP_OK)
+        return {olifilo::unexpect, status, esp::error_category()};
+      return event_subscription_default(event_base, event_id, subscription);
+    }
+
+    constexpr event_subscription_default(event_subscription_default&& rhs) noexcept
+      : event_base{rhs.event_base}
+      , event_id{rhs.event_id}
+      , subscription{std::exchange(rhs.subscription, nullptr)}
+    {
+    }
+
+    event_subscription_default& operator=(event_subscription_default&& rhs) noexcept
+    {
+      if (subscription)
+        esp_event_handler_instance_unregister(event_base, event_id, std::exchange(subscription, nullptr));
+
+      this->event_base = rhs.event_base;
+      this->event_id = rhs.event_id;
+      this->subscription = std::exchange(rhs.subscription, nullptr);
+      return *this;
+    }
+
+    ~event_subscription_default()
+    {
+      if (subscription)
+        esp_event_handler_instance_unregister(event_base, event_id, subscription);
+    }
+};
+
 struct networking
 {
   std::unique_ptr<esp_netif_t, esp::eth_deleter> netif;
@@ -176,6 +236,7 @@ struct networking
     std::vector<event_t> events;
     std::mutex event_lock;
     olifilo::io::file_descriptor notifier;
+    event_subscription_default subscription;
 
     static void receive(void* arg, esp_event_base_t event_base, std::int32_t event_id, void* event_data) noexcept
     {
@@ -239,6 +300,8 @@ struct networking
 
     olifilo::future<event_t> receive() noexcept
     {
+      assert(notifier && "used nothrow constructor without calling init()!");
+
       while (true)
       {
         {
@@ -276,10 +339,14 @@ struct networking
       notifier = olifilo::io::file_descriptor_handle(eventfd(0, 0));
       if (!notifier)
         return {errno, std::system_category()};
-      if (const auto status = ::esp_event_handler_register(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, (esp_event_handler_t)&receive, this); status != ESP_OK)
+      if (auto subscription = event_subscription_default::create(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, (esp_event_handler_t)&receive, this); !subscription)
       {
         notifier = nullptr;
-        return {status, esp::error_category()};
+        return subscription.error();
+      }
+      else
+      {
+        this->subscription = std::move(*subscription);
       }
       return {};
     }
@@ -296,12 +363,6 @@ struct networking
 
     constexpr event_queue_t(std::nothrow_t) noexcept
     {
-    }
-
-    constexpr ~event_queue_t()
-    {
-      if (notifier)
-        ESP_ERROR_CHECK(esp_event_handler_unregister(ESP_EVENT_ANY_BASE, ESP_EVENT_ANY_ID, &receive));
     }
   };
 
