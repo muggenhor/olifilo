@@ -59,5 +59,11 @@ constexpr bool all_are_future = (is_future_v<Ts> && ...);
 
 template <typename... Ts>
 constexpr bool all_are_future<std::tuple<Ts...>> = (is_future_v<Ts> && ...);
+
+template <typename... Ts>
+constexpr bool all_are_lvalue_reference = (std::is_lvalue_reference_v<Ts> && ...);
+
+template <typename... Ts>
+constexpr bool all_are_lvalue_reference<std::tuple<Ts...>> = (std::is_lvalue_reference_v<Ts> && ...);
 }  // namespace detail
 }  // namespace olifilo

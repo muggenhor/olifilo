@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "future.hpp"
+#include "wait.hpp"
 
 namespace olifilo
 {
@@ -81,7 +82,7 @@ struct when_any_t
   future<when_any_result<std::tuple<future<Ts>...>>>
     static constexpr operator()(future<Ts>&&... futures) noexcept
   {
-    return when_all_t::_apply_with_indices(
+    return when_any_t::_apply_with_indices(
         std::make_index_sequence<sizeof...(Ts)>()
       , std::optional<wait_t::clock::time_point>{std::nullopt}
       , std::move(futures)...

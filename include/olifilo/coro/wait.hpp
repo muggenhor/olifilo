@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <optional>
 #include <ranges>
+#include <type_traits>
 
 #include "future.hpp"
 #include <olifilo/detail/small_vector.hpp>
@@ -99,11 +100,12 @@ struct wait_t
 
   template <typename... Ts>
   requires(detail::timeout<detail::last_type_of<Ts...>>
-       && detail::all_are_future<detail::everything_except_last<Ts...>>)
+       && detail::all_are_future<detail::everything_except_last<std::remove_reference_t<Ts>...>>
+       && detail::all_are_lvalue_reference<detail::everything_except_last<Ts...>>)
   future<std::size_t>
     static constexpr operator()(
       until                            wait_until
-    , Ts&...                           futures_with_timeout_at_end
+    , Ts&&...                          futures_with_timeout_at_end
     ) noexcept
   {
     auto my_timeout = detail::to_timeout_point(detail::forward_last(futures_with_timeout_at_end...));
