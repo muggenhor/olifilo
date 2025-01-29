@@ -32,7 +32,7 @@ template <EventIdEnum auto EventId>
 struct event
 {
   // Defaulting to 'void' because there are plenty of events without payload
-  using type = int;
+  using type = void;
 };
 
 template <EventIdEnum auto EventId>
