@@ -9,6 +9,7 @@
 #include <type_traits>
 
 #include <olifilo/expected.hpp>
+#include <olifilo/utility.hpp>
 
 namespace olifilo
 {
@@ -80,13 +81,13 @@ class dynarray
     }
 
     template <typename Self>
-    constexpr auto end(this Self&& self) noexcept -> std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const value_type*, value_type*>
+    constexpr auto end(this Self&& self) noexcept -> cv_like_t<Self, value_type*>
     {
       return static_cast<value_type*>(static_cast<void*>(self._count));
     }
 
     template <typename Self>
-    constexpr auto begin(this Self&& self) noexcept -> std::conditional_t<std::is_const_v<std::remove_reference_t<Self>>, const value_type*, value_type*>
+    constexpr auto begin(this Self&& self) noexcept -> cv_like_t<Self, value_type*>
     {
       if (!self._count)
         return nullptr;
