@@ -2,175 +2,30 @@
 
 #include <olifilo/idf/event.hpp>
 
+#include <algorithm>
+#include <cstring>
+#include <iterator>
+
+#include <olifilo/dynarray.hpp>
 #include <olifilo/idf/errors.hpp>
-#include <olifilo/idf/events/eth.hpp>
-#include <olifilo/idf/events/ip.hpp>
-#include <olifilo/idf/events/wifi.hpp>
 
 #include <esp_event.h>
 #include <esp_log.h>
-#include <esp_vfs_eventfd.h>
+#include <esp_vfs.h>
+#include <esp_vfs_ops.h>
 
 namespace olifilo::esp
 {
-namespace
-{
-constexpr char TAG[] = "olifilo::esp::event";
+static constexpr char TAG[] = "olifilo::esp::event";
 
-template <typename R, typename T>
-  requires(std::is_constructible_v<R, std::in_place_type_t<std::monostate>>)
-constexpr R decode_event(void* event_data)
-{
-  if constexpr (std::is_void_v<T> || !std::is_constructible_v<R, std::in_place_type_t<T>, const T&>)
-    return R(std::in_place_type<std::monostate>);
-  else
-    return R(std::in_place_type<T>, *static_cast<const T*>(event_data));
-}
-
-template <typename R, detail::EventIdEnum EventId, std::underlying_type_t<EventId> Base = detail::event_id<EventId>::min>
-  requires(std::is_constructible_v<R, std::in_place_type_t<std::monostate>>)
-#if __GNUC__
-// Causes significant code reduction for large enums (400 bytes for WIFI_EVENT). Probably because it groups duplicate code
-__attribute__((__always_inline__))
-#endif
-constexpr R decode_event(EventId event_id, void* event_data)
-{
-  if (std::to_underlying(event_id) < Base)
-    return R(std::in_place_type<std::monostate>);
-
-  constexpr auto Max = detail::event_id<EventId>::max;
-
-  switch (std::to_underlying(event_id) - Base)
-  {
-    case 0:
-      if constexpr (0 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(0 + Base)>>(event_data);
-    case 1:
-      if constexpr (1 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(1 + Base)>>(event_data);
-    case 2:
-      if constexpr (2 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(2 + Base)>>(event_data);
-    case 3:
-      if constexpr (3 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(3 + Base)>>(event_data);
-    case 4:
-      if constexpr (4 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(4 + Base)>>(event_data);
-    case 5:
-      if constexpr (5 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(5 + Base)>>(event_data);
-    case 6:
-      if constexpr (6 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(6 + Base)>>(event_data);
-    case 7:
-      if constexpr (7 + Base <= Max)
-        return decode_event<R, detail::event_t<static_cast<EventId>(7 + Base)>>(event_data);
-    default:
-      if constexpr (Base + 8 <= Max)
-        return decode_event<R, EventId, Base + 8>(event_id, event_data);
-      else
-        return R(std::in_place_type<std::monostate>);
-  }
-}
-
-template <typename R, std::size_t Base = 0>
-  requires(std::tuple_size_v<R> >= 2
-        && std::variant_size_v<std::tuple_element_t<0, R>> >= 0
-        && std::is_constructible_v<std::tuple_element_t<1, R>, std::in_place_type_t<std::monostate>>)
-constexpr expected<R> decode_event(::esp_event_base_t event_base, std::int32_t event_id, void* event_data)
-{
-  using event_id_t = std::tuple_element_t<0, R>;
-  using event_t = std::tuple_element_t<1, R>;
-  constexpr auto Max = std::variant_size_v<event_id_t>;
-
-  if constexpr (Base + 0 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 0, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 1 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 1, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 2 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 2, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 3 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 3, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 4 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 4, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 5 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 5, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 6 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 6, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 7 < Max)
-  {
-    using cur_event_t = std::variant_alternative_t<Base + 7, event_id_t>;
-    if (event_base == detail::event_id<cur_event_t>::base)
-    {
-      const auto event_id_ = static_cast<cur_event_t>(event_id);
-      return {std::in_place, event_id_, decode_event<event_t>(event_id_, event_data)};
-    }
-  }
-  if constexpr (Base + 8 < Max)
-  {
-    return decode_event<R, Base + 8>(event_base, event_id, event_data);
-  }
-
-  return {unexpect, make_error_code(std::errc::not_supported)};
-}
-}  // anonymous namespace
+std::array<events::fd_context, 5> events::contexts;
 
 expected<void> event_subscription_default::destroy() noexcept
 {
-  if (!subscription)
+  if (!_subscription)
     return {unexpect, make_error_code(std::errc::invalid_argument)};
 
-  return {unexpect, esp_event_handler_instance_unregister(event_base, event_id, subscription), error_category()};
+  return {unexpect, esp_event_handler_instance_unregister(_event_base, _event_id, _subscription), error_category()};
 }
 
 expected<event_subscription_default> event_subscription_default::create(
@@ -192,153 +47,345 @@ expected<event_subscription_default> event_subscription_default::create(
   return event_subscription_default(event_base, event_id, subscription);
 }
 
-std::error_code event_queue::init() noexcept
+struct events::fd_waiter
 {
-  if (notifier)
-    return {};
+  int                     fd      = -1;
+  ::fd_set*               readers = nullptr;
+  ::fd_set*               errors  = nullptr;
+  ::esp_vfs_select_sem_t  waker;
+
+  ~fd_waiter()
+  {
+    if (fd < 0)
+      return;
+
+    auto&& context = contexts[fd];
+    std::scoped_lock _(context.lock);
+    erase(context.waiters, this);
+  }
+};
+
+events::fd_context::~fd_context()
+{
+  std::allocator<std::byte> alloc;
+  waiters.destroy(alloc);
+}
+
+void events::fd_context::receive(this events::fd_context* self, esp_event_base_t event_base, std::int32_t event_id, void* event_data) noexcept
+{
+  ESP_LOGD(TAG, "fd[%zd@%p]::receive: received event %s:%ld(%p) [open=%u,max_size=%zu]"
+      , self - contexts.begin(), self, event_base, event_id, event_data, self->opened, self->event_data_size);
+
+  assert(self != nullptr);
+  std::scoped_lock _(self->lock);
+  if (!self->opened)
+    return;
+
+  const auto event_size = sizeof(::esp_event_base_t) + sizeof(std::int32_t) + self->event_data_size;
+  assert(self->queue.size() % event_size == 0);
+  self->queue.reserve(self->queue.size() + event_size);
+  std::back_insert_iterator out(self->queue);
+  out = std::ranges::copy(as_bytes(std::span(&event_base, 1)), out).out;
+  out = std::ranges::copy(as_bytes(std::span(&event_id, 1)), out).out;
+  if (event_data)
+    out = std::ranges::copy(std::span(static_cast<const std::byte*>(event_data), self->event_data_size), out).out;
+  else
+    self->queue.resize(self->queue.size() + self->event_data_size);
+  ESP_LOGD(TAG, "fd[%zd@%p]::receive: event queue size: %zu"
+      , self - contexts.begin(), self, self->queue.size());
+  assert(self->queue.size() % event_size == 0);
+  assert(!self->queue.empty());
+
+  for (auto& waiter : self->waiters)
+    esp_vfs_select_triggered(waiter->waker);
+}
+
+expected<int> events::init() noexcept
+{
+  using fd_waiters_t = dynarray<fd_waiter>;
+
+  static constexpr ::esp_vfs_select_ops_t select_ops = {
+      .start_select = [](
+            int                  nfds
+          , fd_set*              readfds
+          , fd_set*              writefds
+          , fd_set*              exceptfds
+          , esp_vfs_select_sem_t waker
+          , void**               driver_data) noexcept -> esp_err_t
+        {
+          nfds = std::min(nfds, static_cast<int>(events::contexts.size()));
+
+          // Count fds to allocate for
+          std::size_t count = 0;
+          bool should_awake = false;
+          for (int fd = 0; fd < nfds; ++fd)
+          {
+            // event fds are never writable
+            // thus everything in writefds is always 'ready' (to fail with ENOSYS)
+            if (FD_ISSET(fd, writefds))
+            {
+              should_awake = true;
+              break;
+            }
+            auto&& context = events::contexts[fd];
+            if (FD_ISSET(fd, readfds))
+            {
+              std::scoped_lock _(context.lock);
+              if (!context.queue.empty() || !context.opened)
+              {
+                should_awake = true;
+                break;
+              }
+              ++count;
+            }
+            if (FD_ISSET(fd, exceptfds))
+            {
+              if (!context.opened)
+              {
+                should_awake = true;
+                break;
+              }
+              ++count;
+            }
+          }
+
+          fd_waiters_t fd_waiters;
+          if (!should_awake)
+          {
+            if (auto r = fd_waiters_t::create(count); r)
+              fd_waiters = *std::move(r);
+            else if (&r.error().category() == &error_category())
+              return r.error().value();
+            else if (r.error() == std::errc::invalid_argument)
+              return ESP_ERR_INVALID_ARG;
+            else if (r.error() == std::errc::not_enough_memory)
+              return ESP_ERR_NO_MEM;
+            else
+              return ESP_FAIL;
+          }
+
+          auto fd_waiter = fd_waiters.begin();
+          for (int fd = 0; fd < nfds; ++fd)
+          {
+            if (!FD_ISSET(fd, readfds) && !FD_ISSET(fd, exceptfds))
+              continue;
+
+            auto&& context = events::contexts[fd];
+            std::scoped_lock _(context.lock);
+
+            if (!context.opened)
+              continue;
+
+            ::fd_set* const check_read  = FD_ISSET(fd, readfds  ) ? readfds   : nullptr;
+            ::fd_set* const check_error = FD_ISSET(fd, exceptfds) ? exceptfds : nullptr;
+            FD_CLR(fd, exceptfds);
+            if (check_read
+             && context.queue.empty())
+                FD_CLR(fd, check_read);
+
+            if (should_awake)
+              // avoid allocating more.
+              // we already know we're awaking select: no need for the bookkeeping!
+              continue;
+
+            assert(fd_waiter != fd_waiters.end());
+            fd_waiter->fd       = fd;
+            fd_waiter->readers  = check_read;
+            fd_waiter->errors   = check_error;
+            fd_waiter->waker    = waker;
+
+            std::allocator<std::byte> alloc;
+            if (auto r = context.waiters.push_back(fd_waiter++, alloc); r)
+              ;
+            else if (&r.error().category() == &error_category())
+              return r.error().value();
+            else if (r.error() == std::errc::invalid_argument)
+              return ESP_ERR_INVALID_ARG;
+            else if (r.error() == std::errc::not_enough_memory)
+              return ESP_ERR_NO_MEM;
+            else
+              return ESP_FAIL;
+          }
+
+          if (should_awake)
+            esp_vfs_select_triggered(waker);
+          else
+            *driver_data = fd_waiters.release();
+
+          return ESP_OK;
+        },
+      .end_select = [](void* driver_data) noexcept -> esp_err_t
+        {
+          // resume ownership of waiter list we released in start_select
+          fd_waiters_t fd_waiters(driver_data);
+          for (auto& fd_waiter : fd_waiters)
+          {
+            auto&& context = events::contexts[fd_waiter.fd];
+            std::scoped_lock _(context.lock);
+
+            if (context.opened)
+            {
+              if (fd_waiter.readers && !context.queue.empty())
+                FD_SET(fd_waiter.fd, fd_waiter.readers);
+            }
+            else
+            {
+              if (fd_waiter.errors)
+                FD_SET(fd_waiter.fd, fd_waiter.errors);
+            }
+          }
+
+          return ESP_OK;
+        },
+  };
+  static constexpr ::esp_vfs_fs_ops_t vfs = {
+      .read = [](int fd, void *data, size_t size) noexcept -> ssize_t
+        {
+          if (fd < 0 || fd >= events::contexts.size())
+          {
+            errno = EBADF;
+            return -1;
+          }
+
+          auto&& context = events::contexts[fd];
+          if (data == nullptr)
+          {
+            errno = EFAULT;
+            return -1;
+          }
+
+          std::scoped_lock _(context.lock);
+          ESP_LOGD(TAG, "read(fd=%d@%p [open=%u], dest=<%p,%zu>): event queue size: %zu"
+              , fd, &context, context.opened, data, size, context.queue.size());
+          if (!context.opened)
+          {
+            errno = EBADF;
+            return -1;
+          }
+          const auto event_size = sizeof(::esp_event_base_t) + sizeof(std::int32_t) + context.event_data_size;
+          if (size < event_size)
+          {
+            errno = EMSGSIZE;
+            return -1;
+          }
+          if (context.queue.empty())
+          {
+            errno = EAGAIN;
+            return -1;
+          }
+
+          assert(context.queue.size() % event_size == 0);
+          std::memcpy(data, context.queue.data(), event_size);
+          context.queue.erase(context.queue.begin(), context.queue.begin() + event_size);
+          return event_size;
+        },
+      .close = [](int fd) noexcept -> int
+        {
+          if (fd < 0 || fd >= events::contexts.size())
+          {
+            errno = EBADF;
+            return -1;
+          }
+
+          auto&& context = events::contexts[fd];
+          std::scoped_lock _(context.lock);
+          if (!std::exchange(context.opened, false))
+          {
+            errno = EBADF;
+            return -1;
+          }
+
+          context.queue.clear();
+          context.subscriptions.clear();
+          for (auto& waiter : context.waiters)
+            esp_vfs_select_triggered(waiter->waker);
+
+          return 0;
+        },
+      .select = &select_ops,
+  };
+
+  static ::esp_vfs_id_t vfs_id = -1;
+  if (vfs_id != -1)
+    return {std::in_place, vfs_id};
+
+  static std::mutex once;
+  std::scoped_lock _(once);
+
+  if (vfs_id != -1)
+    return {std::in_place, vfs_id};
 
   // ESP_ERR_INVALID_STATE is returned when a subsystem is already initialized
   if (const auto status = ::esp_event_loop_create_default(); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-    return {status, error_category()};
+    return {olifilo::unexpect, status, error_category()};
 
+  if (const auto status = esp_vfs_register_fs_with_id(&vfs, ESP_VFS_FLAG_STATIC, nullptr, &vfs_id); status != ESP_OK)
   {
-    constexpr auto config = ESP_VFS_EVENTD_CONFIG_DEFAULT();
-    if (const auto status = ::esp_vfs_eventfd_register(&config); status != ESP_OK && status != ESP_ERR_INVALID_STATE)
-      return {status, error_category()};
+    vfs_id = -1;
+    return {olifilo::unexpect, status, error_category()};
   }
 
-  notifier = io::file_descriptor_handle(eventfd(0, 0));
-  if (!notifier)
-    return {errno, std::system_category()};
-  // Subscribe to all event "bases" that we can store in event_id_t.
-  static constexpr auto subscribe = [](event_queue& queue, ::esp_event_base_t event_base, std::size_t index) -> std::error_code {
-    ESP_LOGD(TAG, "subscribing to all events for %s", event_base);
-    if (auto subscription = decltype(subscriptions)::value_type::create(
-          event_base
-        , ESP_EVENT_ANY_ID
-        , (esp_event_handler_t)&receive
-        , &queue); !subscription)
-    {
-      queue.notifier = nullptr;
-      return subscription.error();
-    }
-    else
-    {
-      queue.subscriptions[index] = std::move(*subscription);
-    }
-
-    return {};
-  };
-  static constexpr auto subscribe_all = []<std::size_t Base = 0, typename Self>(this Self&& self, event_queue& queue) __attribute__((__always_inline__)) -> std::error_code {
-    constexpr auto Max = std::variant_size_v<event_id_t>;
-
-    if constexpr (Base + 0 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 0, event_id_t>>::base, Base + 0))
-        return err;
-    }
-    if constexpr (Base + 1 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 1, event_id_t>>::base, Base + 1))
-        return err;
-    }
-    if constexpr (Base + 2 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 2, event_id_t>>::base, Base + 2))
-        return err;
-    }
-    if constexpr (Base + 3 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 3, event_id_t>>::base, Base + 3))
-        return err;
-    }
-    if constexpr (Base + 4 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 4, event_id_t>>::base, Base + 4))
-        return err;
-    }
-    if constexpr (Base + 5 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 5, event_id_t>>::base, Base + 5))
-        return err;
-    }
-    if constexpr (Base + 6 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 6, event_id_t>>::base, Base + 6))
-        return err;
-    }
-    if constexpr (Base + 7 < Max)
-    {
-      if (auto err = subscribe(queue, detail::event_id<std::variant_alternative_t<Base + 7, event_id_t>>::base, Base + 7))
-        return err;
-    }
-    if constexpr (Base + 8 < Max)
-    {
-      return std::forward<Self>(self).template operator()<Base + 8>(queue);
-    }
-
-    return {};
-  };
-
-  return subscribe_all(*this);
+  return {std::in_place, vfs_id};
 }
 
-event_queue::event_queue()
+expected<io::file_descriptor> events::subscribe(std::initializer_list<std::tuple<::esp_event_base_t, std::int32_t>> events, std::size_t event_data_size) noexcept
 {
-  if (auto error = init())
-#if __cpp_exceptions
-    throw std::system_error(error);
-#else
-    std::abort();
-#endif
-}
+  const auto vfs = init();
+  if (!vfs)
+    return {unexpect, vfs.error()};
 
-future<std::pair<event_queue::event_id_t, event_queue::event_t>> event_queue::receive() noexcept
-{
-  if (!notifier)
-    // used std::nothrow constructor without calling init()?
-    co_return {unexpect, make_error_code(std::errc::not_connected)};
-
-  while (true)
+  for (int fd = 0; fd < contexts.size(); ++fd)
   {
+    auto&& context = contexts[fd];
+    std::scoped_lock _(context.lock);
+    if (context.opened || !context.waiters.empty())
+      continue;
+
+    context.subscriptions.clear();
+    context.subscriptions.reserve(events.size());
+
+    for (auto&& [event_base, event_id] : events)
     {
-      std::scoped_lock _(event_lock);
-      if (!events.empty())
+      ESP_LOGD(TAG, "[local_fd=%d] subscribing to %s:%ld (max_size=%zu)"
+          , fd, event_base, event_id, event_data_size);
+      if (auto subscription = event_subscription_default::create(
+            event_base
+          , event_id
+          // cast only changes first param from 'fd_context*' to 'void*' (the value it receives is &context below: fd_context*)
+          , reinterpret_cast<void (*)(void*, ::esp_event_base_t, std::int32_t, void*) noexcept>(&fd_context::receive)
+          , &context); !subscription)
       {
-        auto rv = events.front();
-        events.erase(events.begin());
-        co_return rv;
+        context.subscriptions.clear();
+        return subscription.error();
+      }
+      else
+      {
+        context.subscriptions.push_back(*std::move(subscription));
       }
     }
 
-    std::uint64_t event_count;
-    if (const auto r = co_await notifier.read(as_writable_bytes(std::span(&event_count, 1)), eagerness::lazy); !r)
-      co_return {unexpect, r.error()};
-    else if (r->size_bytes() != sizeof(event_count))
+    int global_fd;
+    if (const auto status = esp_vfs_register_fd_with_local_fd(
+          *vfs
+        , fd
+        , /*permanent=*/false
+        , &global_fd
+        ); status == ESP_ERR_NO_MEM)
     {
-      ESP_LOGE(TAG, "event_count size: %u", r->size_bytes());
-      co_return {unexpect, ESP_FAIL, error_category()};
+      context.subscriptions.clear();
+      return {unexpect, static_cast<int>(std::errc::too_many_files_open), std::system_category()};
     }
-    else if (event_count <= 0)
+    else if (status != ESP_OK)
     {
-      ESP_LOGE(TAG, "event_count: %llu", event_count);
-      co_return {unexpect, ESP_FAIL, error_category()};
+      context.subscriptions.clear();
+      return {unexpect, status, error_category()};
     }
-    ESP_LOGD(TAG, "received %lu events", static_cast<std::uint32_t>(event_count));
+
+    context.event_data_size = event_data_size;
+    context.opened = true;
+    return {std::in_place, io::file_descriptor_handle(global_fd)};
   }
-}
 
-void event_queue::receive(void* arg, esp_event_base_t event_base, std::int32_t event_id, void* event_data) noexcept
-{
-  auto&& self = *static_cast<event_queue*>(arg);
-  auto event = decode_event<decltype(self.events)::value_type>(event_base, event_id, event_data);
-  ESP_LOGD(TAG, "received event %s:%ld(%p) -> decoded to type %d", event_base, event_id, event_data, event ? static_cast<int>(event->second.index()) : -1);
-  if (!event)
-    return;
-
-  std::scoped_lock _(self.event_lock);
-  self.events.push_back(std::move(*event));
-  const std::uint64_t eventnum = 1;
-  self.notifier.write(as_bytes(std::span(&eventnum, 1))).get().value();
+  return {unexpect, make_error_code(std::errc::too_many_files_open)};
 }
 }  // namespace olifilo::esp

@@ -52,3 +52,19 @@ struct overaligned
 template struct checks<empty_t>;
 template struct checks<overaligned>;
 ```
+
+# esp::idf::events
+## Caveats
+
+* When subscribing to events with varying payload sizes we *will*
+  (currently) read beyond the boundary of smaller (than max) payloads
+    - nullptrs are not read and instead we effectively do 
+      `memset(0, max_size)` for that
+    - this is technically undefined behavior but practically fine
+      (as we later on ignore the extra bytes we've read)
+    -  Maybe keep track of payload sizes in `fd_context::subscriptions`?
+* Should probably store the message queue as ring buffer instead
+    - or at least bounded
+* Maybe add a 'size' field to message header (iff payload sizes vary)?
+* Maybe do bit packing/compression on header fields?
+    - watch out not to go to zero-sized message for subscription to single `void` event

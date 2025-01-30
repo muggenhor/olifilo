@@ -14,6 +14,7 @@ template <>
 struct event_id<::wifi_event_t>
 {
   static constexpr const auto& base = ::WIFI_EVENT;
+  static constexpr std::size_t sort_key = 0;
   static constexpr auto min = std::to_underlying(::WIFI_EVENT_WIFI_READY) + 1; // READY is never generated
   static constexpr auto max = std::to_underlying(::WIFI_EVENT_MAX) - 1;
 };

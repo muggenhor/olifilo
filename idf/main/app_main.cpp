@@ -17,10 +17,36 @@
 
 #include <olifilo/idf/errors.hpp>
 #include <olifilo/idf/event.hpp>
+#include <olifilo/idf/events/ip.hpp>
+#include <olifilo/idf/events/wifi.hpp>
 
 #include "../../src/coro.cpp"
 
 static constexpr char TAG[] = "olifilo-test";
+namespace
+{
+template<typename... Ts>
+struct overloaded : Ts... { using Ts::operator()...; };
+}  // anonymous namespace
+
+namespace olifilo::esp
+{
+future<void> wifi_start() noexcept
+{
+  auto started_event = olifilo::esp::events::subscribe<WIFI_EVENT_STA_START>();
+  if (!started_event)
+    co_return {olifilo::unexpect, started_event.error()};
+
+  if (const auto status = ::esp_wifi_start(); status != ESP_OK)
+    co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+
+  auto status = co_await started_event->receive();
+  if (!status)
+    co_return {olifilo::unexpect, status.error()};
+
+  co_return {};
+}
+}  // namespace olifilo::esp
 
 namespace esp
 {
@@ -78,9 +104,8 @@ struct networking
 
   static olifilo::future<networking> create() noexcept
   {
-    olifilo::esp::event_queue event_queue{std::nothrow};
-    if (auto error = event_queue.init(); error)
-      co_return {olifilo::unexpect, error};
+    if (auto status = olifilo::esp::events::init(); !status)
+      co_return {olifilo::unexpect, status.error()};
 
     if (const auto status = ::esp_netif_init(); status != ESP_OK)
       co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
@@ -193,50 +218,76 @@ struct networking
     else
 #endif
     {
-      if (const auto status = esp_wifi_start(); status != ESP_OK)
+      if (const auto status = co_await olifilo::esp::wifi_start(); !status)
+        co_return {olifilo::unexpect, status.error()};
+    }
+
+    // unsorted, mixed & duplicated on purpose to test (compile-time) sorting & de-duplication
+    auto wifi_event_reader = olifilo::esp::events::subscribe<
+        IP_EVENT_STA_GOT_IP
+      , WIFI_EVENT_STA_DISCONNECTED
+      , IP_EVENT_PPP_GOT_IP
+      , WIFI_EVENT_STA_CONNECTED
+      , IP_EVENT_ETH_GOT_IP
+      , IP_EVENT_STA_GOT_IP
+      >();
+    if (!wifi_event_reader)
+      co_return {olifilo::unexpect, wifi_event_reader.error()};
+
+#if CONFIG_ETH_USE_OPENETH
+    if (!network.eth_handle)
+#endif
+    {
+      if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
         co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
 
     while (true)
     {
-      auto event = co_await event_queue.receive();
+      auto event = co_await wifi_event_reader->receive();
       if (!event)
         co_return {olifilo::unexpect, event.error()};
       const auto& [event_id, event_data] = *event;
 
-      if (auto* ip_event = std::get_if<ip_event_got_ip_t>(&event_data))
-      {
-        const char* const desc = esp_netif_get_desc(ip_event->esp_netif);
-        ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
+      ESP_LOGI(TAG, "%d: received event %s:%ld"
+          , __LINE__
+          , visit([](olifilo::esp::detail::EventIdEnum auto id) { return olifilo::esp::detail::event_id<decltype(id)>::base; }, event_id)
+          , visit([](olifilo::esp::detail::EventIdEnum auto id) { return static_cast<std::int32_t>(id); }, event_id)
+          );
+      if (auto error = visit(
+            overloaded{
+              [] (const ::ip_event_got_ip_t& ip_event) noexcept -> std::error_code
+              {
+                const char* const desc = esp_netif_get_desc(ip_event.esp_netif);
+                ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
+                return {};
+              },
+              [] (const ::wifi_event_sta_connected_t& wifi_event) noexcept -> std::error_code
+              {
+                ESP_LOGI(TAG, "Connected to: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx on channel %hhu"
+                    , wifi_event.ssid_len, wifi_event.ssid
+                    , wifi_event.bssid[0], wifi_event.bssid[1], wifi_event.bssid[2], wifi_event.bssid[3], wifi_event.bssid[4], wifi_event.bssid[5]
+                    , wifi_event.channel
+                    );
+                return {};
+              },
+              [] (const ::wifi_event_sta_disconnected_t& wifi_event) noexcept -> std::error_code
+              {
+                ESP_LOGI(TAG, "Disconnected from: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx because %hhu"
+                    , wifi_event.ssid_len, wifi_event.ssid
+                    , wifi_event.bssid[0], wifi_event.bssid[1], wifi_event.bssid[2], wifi_event.bssid[3], wifi_event.bssid[4], wifi_event.bssid[5]
+                    , wifi_event.reason
+                    );
+                if (wifi_event.reason != WIFI_REASON_ROAMING)
+                  return {::esp_wifi_connect(), olifilo::esp::error_category()};
+                return {};
+              },
+            }
+          , event_data);
+          error)
+        co_return {olifilo::unexpect, error};
+      if (std::holds_alternative<::ip_event_got_ip_t>(event_data))
         co_return network;
-      }
-      else if (event_id == olifilo::esp::event_queue::event_id_t(::WIFI_EVENT_STA_START))
-      {
-        ESP_LOGI(TAG, "%d", __LINE__);
-        if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
-          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-      }
-      else if (auto* wifi_event = std::get_if<wifi_event_sta_connected_t>(&event_data))
-      {
-        ESP_LOGI(TAG, "Connected to: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx on channel %hhu"
-            , wifi_event->ssid_len, wifi_event->ssid
-            , wifi_event->bssid[0], wifi_event->bssid[1], wifi_event->bssid[2], wifi_event->bssid[3], wifi_event->bssid[4], wifi_event->bssid[5]
-            , wifi_event->channel
-            );
-      }
-      else if (auto* wifi_event = std::get_if<wifi_event_sta_disconnected_t>(&event_data))
-      {
-        ESP_LOGI(TAG, "Disconnected from: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx because %hhu"
-            , wifi_event->ssid_len, wifi_event->ssid
-            , wifi_event->bssid[0], wifi_event->bssid[1], wifi_event->bssid[2], wifi_event->bssid[3], wifi_event->bssid[4], wifi_event->bssid[5]
-            , wifi_event->reason
-            );
-        if (wifi_event->reason != WIFI_REASON_ROAMING)
-        {
-          if (const auto status = ::esp_wifi_connect(); status != ESP_OK)
-            co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-        }
-      }
     }
   }
 };

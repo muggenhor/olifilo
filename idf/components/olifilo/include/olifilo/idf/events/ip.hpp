@@ -14,6 +14,7 @@ template <>
 struct event_id<::ip_event_t>
 {
   static constexpr const auto& base = ::IP_EVENT;
+  static constexpr std::size_t sort_key = 3;
   static constexpr auto min = std::to_underlying(::IP_EVENT_STA_GOT_IP);
   static constexpr auto max = std::to_underlying(::IP_EVENT_TX_RX);
 };

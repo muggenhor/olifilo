@@ -15,6 +15,7 @@ template <>
 struct event_id<::eth_event_t>
 {
   static constexpr const auto& base = ::ETH_EVENT;
+  static constexpr std::size_t sort_key = 1;
   static constexpr auto min = std::to_underlying(::ETHERNET_EVENT_START);
   static constexpr auto max = std::to_underlying(::ETHERNET_EVENT_DISCONNECTED);
 };
