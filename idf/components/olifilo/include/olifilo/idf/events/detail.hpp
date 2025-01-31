@@ -3,6 +3,7 @@
 #pragma once
 
 #include <algorithm>
+#include <ranges>
 #include <tuple>
 #include <type_traits>
 #include <variant>
@@ -46,19 +47,31 @@ template <>
 constexpr std::size_t size_of<void> = 0;
 
 template <EventIdEnum auto... EventIds>
-consteval auto sort_indices() noexcept
+consteval auto sort_indices_impl() noexcept
 {
   static constexpr std::array sort_keys{
     std::tuple(event_id<decltype(EventIds)>::sort_key, static_cast<std::int32_t>(EventIds))...
   };
+  static constexpr auto to_sort_key = [] (const std::size_t i) { return sort_keys[i]; };
+
   std::array<std::size_t, sizeof...(EventIds)> indices;
+  std::ranges::copy(std::views::iota(std::size_t(0), indices.size()), indices.begin());
 
-  for (std::size_t i = 0; i < indices.size(); ++i)
-    indices[i] = i;
+  std::ranges::sort(indices, {}, to_sort_key);
+  auto non_unique = std::ranges::unique(indices, {}, to_sort_key);
 
-  std::ranges::sort(indices, {}, [] (const std::size_t i) { return sort_keys[i]; });
+  return std::tuple(indices, non_unique.begin() - indices.begin());
+}
 
-  return indices;
+template <EventIdEnum auto... EventIds>
+consteval auto sort_indices() noexcept
+{
+  constexpr auto indices_and_end = sort_indices_impl<EventIds...>();
+  constexpr auto indices = std::get<0>(indices_and_end);
+  constexpr auto unique_size = std::get<1>(indices_and_end);
+  std::array<std::size_t, unique_size> unique_indices;
+  std::copy_n(indices.begin(), unique_size, unique_indices.begin());
+  return unique_indices;
 }
 
 template <typename... Ts>

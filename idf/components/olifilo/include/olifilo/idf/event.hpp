@@ -207,15 +207,15 @@ class events
     static constexpr auto subscribe() noexcept
     {
       // use decltype() and call create() ourselves to avoid code-gen for the index_sequence overload
-      return std::remove_pointer_t<decltype(subscribe<EventIds...>(std::make_index_sequence<sizeof...(EventIds)>()))>::create();
+      constexpr auto indices = detail::sort_indices<EventIds...>();
+      return std::remove_pointer_t<decltype(subscribe<indices, EventIds...>(std::make_index_sequence<indices.size()>()))>::create();
     }
 
   private:
     // helper that selects an instance of 'subscriber' with sorted and deduplicated EventIds to reduce instantiations
-    template <detail::EventIdEnum auto... EventIds, std::size_t... Is>
+    template <auto indices, detail::EventIdEnum auto... EventIds, std::size_t... Is>
     static consteval auto subscribe(std::index_sequence<Is...>) noexcept
     {
-      constexpr auto indices = detail::sort_indices<EventIds...>();
       using input_t = std::tuple<std::integral_constant<decltype(EventIds), EventIds>...>;
       return static_cast<subscriber<std::tuple_element_t<indices[Is], input_t>::value...>*>(nullptr);
     }
