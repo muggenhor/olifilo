@@ -204,7 +204,7 @@ constexpr expected<R> decode_event_for_base(EventId id, std::span<const std::byt
   }
   if constexpr (Base + 8 < Max)
   {
-    return decode_event_data<R, EventIds, Base + 8>(id, event_data);
+    return decode_event_for_base<R, EventIds, Base + 8>(id, event_data);
   }
 
   return {unexpect, make_error_code(std::errc::bad_message)};
@@ -296,7 +296,7 @@ constexpr expected<R> decode_event(::esp_event_base_t base, std::int32_t id, std
   }
   if constexpr (Base + 8 < Max)
   {
-    return decode_event<Base + 8>(base, id, event_data);
+    return decode_event<R, Event, var_event_id_t, Base + 8>(base, id, event_data);
   }
 
   return {unexpect, make_error_code(std::errc::bad_message)};
