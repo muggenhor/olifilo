@@ -41,11 +41,7 @@ future<void> wifi_start() noexcept
   if (const auto status = ::esp_wifi_start(); status != ESP_OK)
     co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
 
-  auto status = co_await started_event->receive();
-  if (!status)
-    co_return {olifilo::unexpect, status.error()};
-
-  co_return {};
+  co_return co_await started_event->receive();
 }
 }  // namespace olifilo::esp
 
