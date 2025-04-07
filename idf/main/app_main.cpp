@@ -1,3 +1,4 @@
+#include <bit>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -259,7 +260,12 @@ struct networking
               [] (const ::ip_event_got_ip_t& ip_event) noexcept -> std::error_code
               {
                 const char* const desc = esp_netif_get_desc(ip_event.esp_netif);
-                ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\"", desc);
+                ESP_LOGI(TAG, "Received IPv4 address on interface \"%s\" " IPSTR "/%d gw:" IPSTR ""
+                    , desc
+                    , IP2STR(&ip_event.ip_info.ip)
+                    , std::countl_one(ntohl(ip_event.ip_info.netmask.addr))
+                    , IP2STR(&ip_event.ip_info.gw)
+                    );
                 return {};
               },
               [] (const ::wifi_event_sta_connected_t& wifi_event) noexcept -> std::error_code
