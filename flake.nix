@@ -10,6 +10,7 @@
   };
   inputs.esp-qemu = {
     url = "github:SFrijters/nix-qemu-espressif";
+    inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = inputs@{ self, esp-idf-dev, esp-qemu, flake-utils, nixpkgs, ... }:
