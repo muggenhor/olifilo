@@ -262,15 +262,15 @@ expected<int> events::init() noexcept
             errno = EBADF;
             return -1;
           }
+          if (context.queue.empty())
+          {
+            errno = EAGAIN;
+            return -1;
+          }
           const auto event_size = sizeof(::esp_event_base_t) + sizeof(std::int32_t) + context.event_data_size;
           if (size < event_size)
           {
             errno = EMSGSIZE;
-            return -1;
-          }
-          if (context.queue.empty())
-          {
-            errno = EAGAIN;
             return -1;
           }
 
