@@ -110,21 +110,18 @@ struct networking
     networking network;
 
 #if CONFIG_ETH_USE_OPENETH
-#if !defined(DR_REG_EMAC_BASE) && (CONFIG_IDF_TARGET_ESP32C3 || CONFIG_IDF_TARGET_ESP32S3)
-#  define DR_REG_EMAC_BASE            0x600CD000
-#endif
-#ifndef OPENETH_BASE
-#  define OPENETH_BASE                DR_REG_EMAC_BASE
-#endif
 #ifndef OPENETH_MODER_REG
-#  define OPENETH_MODER_REG           (OPENETH_BASE + 0x00)
+#  define OPENETH_MODER_REG           0x600CD000
 #endif
 #ifndef OPENETH_MODER_DEFAULT
 #  define OPENETH_MODER_DEFAULT       0xa000
 #endif
 
-    ESP_LOGD(TAG, "REG_READ(OPENETH_MODER_REG) (%#lx) == OPENETH_MODER_DEFAULT (%#x)", REG_READ(OPENETH_MODER_REG), OPENETH_MODER_DEFAULT);
-    if (REG_READ(OPENETH_MODER_REG) == OPENETH_MODER_DEFAULT)
+    if ([] {
+        const auto regval = REG_READ(OPENETH_MODER_REG);
+        ESP_LOGD(TAG, "REG_READ(OPENETH_MODER_REG) (%#lx) == OPENETH_MODER_DEFAULT (%#x)", regval, OPENETH_MODER_DEFAULT);
+        return regval == OPENETH_MODER_DEFAULT;
+      }())
     {
       {
         esp_netif_inherent_config_t base_config = ESP_NETIF_INHERENT_DEFAULT_ETH();
