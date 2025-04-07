@@ -10,11 +10,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1737737258,
-        "narHash": "sha256-aoRoRoWB5ews037PS4aOi+a0zR0qQmg1HBs19HfnUX0=",
-        "owner": "muggenhor",
+        "lastModified": 1738140586,
+        "narHash": "sha256-Vn4PD4eH18QklgDY1vnjXJqNPmP3SJNejcBroW0yTTA=",
+        "owner": "mirrexagon",
         "repo": "nixpkgs-esp-dev",
-        "rev": "5e06f3d51b68e0d65fada0aeacf68e6a3e93dc03",
+        "rev": "29517b39abe729e04118bf77af526f9947f6c476",
         "type": "github"
       },
       "original": {
