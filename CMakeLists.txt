@@ -80,6 +80,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/io/poll.hpp
       include/olifilo/io/read.hpp
       include/olifilo/io/select.hpp
+      include/olifilo/io/sendmsg.hpp
       include/olifilo/io/socket.hpp
       include/olifilo/io/sockopt.hpp
       include/olifilo/io/sockopts/base.hpp
