@@ -95,7 +95,14 @@
         set -x
         ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.espflash)} save-image --chip esp32s3 --merge ${pkgs.lib.escapeShellArg packages.esp32s3-olifilo}/bin/olifilo.elf --bootloader ${pkgs.lib.escapeShellArg packages.esp32s3-olifilo}/libexec/olifilo/bootloader.bin --flash-size 4mb esp32s3-olifilo.img
         ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.esptool)} image_info --version 2 esp32s3-olifilo.img
-        ${pkgs.lib.escapeShellArg (pkgs.lib.getExe packages.qemu-esp32s3)} -nographic -monitor unix:monitor.sock,server,nowait -machine esp32s3 -drive file=esp32s3-olifilo.img,if=mtd,format=raw -m 2M -serial "file:$out" &
+        ${pkgs.lib.escapeShellArg (pkgs.lib.getExe packages.qemu-esp32s3)} \
+          -machine esp32s3 \
+          -m 2M \
+          -nographic \
+          -monitor unix:monitor.sock,server,nowait \
+          -drive file=esp32s3-olifilo.img,if=mtd,format=raw \
+          -serial "file:$out" \
+          &
         sleep 3
         echo 'quit' | ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.netcat)} -N -U monitor.sock
         wait
