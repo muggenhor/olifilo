@@ -10,6 +10,7 @@
 #include <olifilo/io/shutdown.hpp>
 
 struct sockaddr;
+struct addrinfo;
 
 namespace olifilo::io
 {
@@ -20,6 +21,7 @@ class stream_socket : public socket_descriptor
 
     static expected<stream_socket> create(int domain, int protocol = 0) noexcept;
     static future<stream_socket> create_connection(int domain, int protocol, const ::sockaddr* addr, std::size_t addrlen) noexcept;
+    static future<stream_socket> create_connection(const ::addrinfo& addr) noexcept;
 
     static future<stream_socket> create_connection(
         int domain, const ::sockaddr* addr, std::size_t addrlen) noexcept

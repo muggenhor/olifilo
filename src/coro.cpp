@@ -2,6 +2,7 @@
 
 #include <olifilo/coro/future.hpp>
 #include <olifilo/coro/io/stream_socket.hpp>
+#include <olifilo/coro/wait.hpp>
 #include <olifilo/coro/when_all.hpp>
 #include <olifilo/coro/when_any.hpp>
 #include <olifilo/expected.hpp>
@@ -14,7 +15,9 @@
 #include "logging-stuff.hpp"
 
 #include <array>
+#include <cassert>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +30,7 @@
 #include <utility>
 
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <unistd.h>
 
 #ifdef ESP_PLATFORM
@@ -91,28 +95,72 @@ class mqtt
 
     std::chrono::duration<std::uint16_t> keep_alive{15};
 
-    static olifilo::future<mqtt> connect(const char* ipv6, uint16_t port, std::uint8_t id) noexcept
+    static olifilo::future<mqtt> connect(const char* host, std::uint16_t port, std::uint8_t id) noexcept
     {
       mqtt con;
+      con.keep_alive = decltype(con.keep_alive)(con.keep_alive.count() << (id & 1));
       {
-        sockaddr_in6 addr {
-          .sin6_family = AF_INET6,
-          .sin6_port = htons(port),
-        };
-        if (auto r = inet_pton(addr.sin6_family, ipv6, &addr.sin6_addr);
-            r == -1)
-          co_return std::error_code(errno, std::system_category());
-        else if (r == 0)
-          co_return std::make_error_code(std::errc::invalid_argument);
-
-        if (auto r = olifilo::io::stream_socket::create_connection(
-              addr.sin6_family, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)))
-          con._sock = std::move(*r);
+        char portstr[6];
+        if (auto status = std::to_chars(std::begin(portstr), std::end(portstr) - 1, port);
+            status.ec != std::errc())
+          co_return {olifilo::unexpect, std::make_error_code(status.ec)};
         else
-          co_return r.error();
+          *status.ptr = '\0';
+
+        static constexpr ::addrinfo lookup_params{
+          .ai_family = AF_UNSPEC,
+          .ai_socktype = SOCK_STREAM,
+        };
+        ::addrinfo* res = nullptr;
+        if (auto error = ::getaddrinfo(host, portstr, &lookup_params, &res);
+            error != 0)
+        {
+          co_return {olifilo::unexpect, error, std::generic_category() /* gai/eai::error_category() */};
+        }
+        else if (!res)
+        {
+          // Huh? getaddrinfo should return an error instead of an empty list!
+          co_return std::make_error_code(std::errc::protocol_error);
+        }
+
+        struct scope_exit
+        {
+          ::addrinfo* res;
+          ~scope_exit()
+          {
+            ::freeaddrinfo(res);
+          }
+        } _(res);
+
+        // Start of Happy Eyeballs (RFC 8305). FIXME: complete me!
+        std::vector<olifilo::future<olifilo::io::stream_socket>> connections;
+        for (auto addr = res; addr; addr = addr->ai_next)
+          connections.push_back(olifilo::io::stream_socket::create_connection(*addr));
+
+        for (const auto connection_timeout = olifilo::wait_t::clock::now() + con.keep_alive * 2;;)
+        {
+          assert(!connections.empty());
+          auto con_iter = co_await olifilo::wait(olifilo::until::first_completed, connections, connection_timeout);
+          if (!con_iter)
+            co_return con_iter.error();
+
+          assert(*con_iter != connections.end());
+          auto con_task = std::move(**con_iter);
+          connections.erase(*con_iter);
+          assert(con_task.done() && "task returned from olifilo::wait should be done!");
+
+          if (auto con_sock = co_await con_task; con_sock)
+          {
+            con._sock = std::move(*con_sock);
+            break;
+          }
+          else if (connections.empty())
+          {
+            co_return con_sock.error();
+          }
+        }
       }
 
-      con.keep_alive = decltype(con.keep_alive)(con.keep_alive.count() << (id & 1));
       // TCP: start sending keep-alive probes after two keep-alive periods have expired without any packets received.
       //      Killing the connection after sol_ip_tcp::keep_alive_count probes have failed to receive a reply.
       (void)olifilo::io::setsockopt<olifilo::io::sol_ip_tcp::keep_alive_idle>(con._sock.handle(), con.keep_alive * 2);

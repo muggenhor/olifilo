@@ -9,6 +9,8 @@
 #include <olifilo/io/sockopt.hpp>
 #include <olifilo/io/sockopts/socket.hpp>
 
+#include <netdb.h>
+
 namespace olifilo::io
 {
 expected<stream_socket> stream_socket::create(int domain, int protocol) noexcept
@@ -69,6 +71,17 @@ future<stream_socket> stream_socket::create_connection(int domain, int protocol,
     co_return r.error();
 
   co_return sock;
+}
+
+future<stream_socket> stream_socket::create_connection(const ::addrinfo& addr) noexcept
+{
+  // TODO: implement something like make_ready_future(error)
+  // to avoid coroutine construction for a simple wrapper like this?
+  if (addr.ai_socktype != SOCK_STREAM)
+    co_return make_error_code(std::errc::protocol_not_supported);
+
+  co_return co_await stream_socket::create_connection(
+      addr.ai_family, addr.ai_protocol, addr.ai_addr, addr.ai_addrlen);
 }
 
 expected<void> stream_socket::shutdown(io::shutdown_how how) noexcept
