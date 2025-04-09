@@ -105,12 +105,10 @@ class mqtt
         else if (r == 0)
           co_return std::make_error_code(std::errc::invalid_argument);
 
-        if (auto r = olifilo::io::stream_socket::create(addr.sin6_family))
+        if (auto r = olifilo::io::stream_socket::create_connection(
+              addr.sin6_family, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)))
           con._sock = std::move(*r);
         else
-          co_return r.error();
-
-        if (auto r = co_await con._sock.connect(reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)); !r)
           co_return r.error();
       }
 

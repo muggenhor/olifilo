@@ -59,6 +59,18 @@ future<void> stream_socket::connect(const ::sockaddr* addr, std::size_t addrlen)
   co_return {};
 }
 
+future<stream_socket> stream_socket::create_connection(int domain, int protocol, const ::sockaddr* addr, std::size_t addrlen) noexcept
+{
+  auto sock = create(domain, protocol);
+  if (!sock)
+    co_return sock;
+
+  if (auto r = co_await sock->connect(addr, addrlen); !r)
+    co_return r.error();
+
+  co_return sock;
+}
+
 expected<void> stream_socket::shutdown(io::shutdown_how how) noexcept
 {
   return io::shutdown(handle(), how);
