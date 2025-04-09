@@ -54,6 +54,7 @@ target_sources(${PROJECT_NAME}
     src/coro/wait.cpp
     src/errors.cpp
     src/io/file_descriptor.cpp
+    src/io/stream_socket.cpp
 )
 
 target_sources(${PROJECT_NAME}
@@ -68,6 +69,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/coro/detail/promise.hpp
       include/olifilo/coro/io/file_descriptor.hpp
       include/olifilo/coro/io/socket_descriptor.hpp
+      include/olifilo/coro/io/stream_socket.hpp
       include/olifilo/coro/io/types.hpp
       include/olifilo/coro/wait.hpp
       include/olifilo/coro/when_all.hpp
