@@ -19,6 +19,7 @@
 
 #include <olifilo/idf/errors.hpp>
 #include <olifilo/idf/event.hpp>
+#include <olifilo/idf/events/eth.hpp>
 #include <olifilo/idf/events/ip.hpp>
 #include <olifilo/idf/events/wifi.hpp>
 
@@ -217,6 +218,22 @@ struct networking
       }
     }
 
+    // unsorted, mixed & duplicated on purpose to test (compile-time) sorting & de-duplication
+    auto wifi_event_reader = olifilo::esp::events::subscribe<
+        IP_EVENT_STA_GOT_IP
+      , WIFI_EVENT_STA_DISCONNECTED
+      , IP_EVENT_PPP_GOT_IP
+      , WIFI_EVENT_STA_CONNECTED
+      , IP_EVENT_ETH_GOT_IP
+      , IP_EVENT_STA_GOT_IP
+#if CONFIG_LWIP_IPV6
+      , IP_EVENT_GOT_IP6
+#endif
+      , ETHERNET_EVENT_CONNECTED
+      >();
+    if (!wifi_event_reader)
+      co_return {olifilo::unexpect, wifi_event_reader.error()};
+
 #if CONFIG_ETH_USE_OPENETH
     if (network.eth_handle)
     {
@@ -229,18 +246,6 @@ struct networking
       if (const auto status = co_await olifilo::esp::wifi_start(); !status)
         co_return {olifilo::unexpect, status.error()};
     }
-
-    // unsorted, mixed & duplicated on purpose to test (compile-time) sorting & de-duplication
-    auto wifi_event_reader = olifilo::esp::events::subscribe<
-        IP_EVENT_STA_GOT_IP
-      , WIFI_EVENT_STA_DISCONNECTED
-      , IP_EVENT_PPP_GOT_IP
-      , WIFI_EVENT_STA_CONNECTED
-      , IP_EVENT_ETH_GOT_IP
-      , IP_EVENT_STA_GOT_IP
-      >();
-    if (!wifi_event_reader)
-      co_return {olifilo::unexpect, wifi_event_reader.error()};
 
 #if CONFIG_ETH_USE_OPENETH
     if (!network.eth_handle)
@@ -275,13 +280,42 @@ struct networking
                     );
                 return {};
               },
-              [] (const ::wifi_event_sta_connected_t& wifi_event) noexcept -> std::error_code
+#if CONFIG_LWIP_IPV6
+              [] (const ::ip_event_got_ip6_t& event) noexcept -> std::error_code
+	      {
+                const char* const desc = esp_netif_get_desc(event.esp_netif);
+                const auto ipv6_type = esp_netif_ip6_get_addr_type(const_cast<::esp_ip6_addr_t*>(&event.ip6_info.ip));
+                ESP_LOGI(TAG, "Received IPv6 address on interface \"%s\" " IPV6STR " (type=%d)"
+                    , desc
+                    , IPV62STR(event.ip6_info.ip)
+                    , ipv6_type
+                    );
+
+	      	return {};
+	      },
+#endif
+              [netif = network.netif.get()] (const ::esp_eth_handle_t& event) noexcept -> std::error_code
+              {
+                ESP_LOGI(TAG, "Connected to ETH");
+#if CONFIG_LWIP_IPV6
+		// Assign link-local IPv6 address (fe80::) to allow SLAAC to start
+                if (const auto error = esp_netif_create_ip6_linklocal(netif); error != ESP_OK)
+                  return {error, olifilo::esp::error_category()};
+#endif
+                return {};
+              },
+              [netif = network.netif.get()] (const ::wifi_event_sta_connected_t& wifi_event) noexcept -> std::error_code
               {
                 ESP_LOGI(TAG, "Connected to: %-.*s, BSSID: %02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx on channel %hhu"
                     , wifi_event.ssid_len, wifi_event.ssid
                     , wifi_event.bssid[0], wifi_event.bssid[1], wifi_event.bssid[2], wifi_event.bssid[3], wifi_event.bssid[4], wifi_event.bssid[5]
                     , wifi_event.channel
                     );
+#if CONFIG_LWIP_IPV6
+		// Assign link-local IPv6 address (fe80::) to allow SLAAC to start
+                if (const auto error = esp_netif_create_ip6_linklocal(netif); error != ESP_OK)
+                  return {error, olifilo::esp::error_category()};
+#endif
                 return {};
               },
               [] (const ::wifi_event_sta_disconnected_t& wifi_event) noexcept -> std::error_code
@@ -301,6 +335,24 @@ struct networking
         co_return {olifilo::unexpect, error};
       if (std::holds_alternative<::ip_event_got_ip_t>(event_data))
         co_return network;
+#if CONFIG_LWIP_IPV6
+      else if (auto* const event = std::get_if<::ip_event_got_ip6_t>(&event_data))
+      {
+        switch (esp_netif_ip6_get_addr_type(const_cast<::esp_ip6_addr_t*>(&event->ip6_info.ip)))
+        {
+          case ESP_IP6_ADDR_IS_UNKNOWN:
+          case ESP_IP6_ADDR_IS_LINK_LOCAL:
+          case ESP_IP6_ADDR_IS_IPV4_MAPPED_IPV6:
+            break;
+
+          case ESP_IP6_ADDR_IS_GLOBAL:
+          case ESP_IP6_ADDR_IS_SITE_LOCAL:
+          case ESP_IP6_ADDR_IS_UNIQUE_LOCAL:
+            // got a routable address!
+            co_return network;
+        }
+      }
+#endif
     }
   }
 };
