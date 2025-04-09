@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <olifilo/coro/future.hpp>
-#include <olifilo/coro/io/file_descriptor.hpp>
+#include <olifilo/coro/io/socket_descriptor.hpp>
 #include <olifilo/coro/when_all.hpp>
 #include <olifilo/coro/when_any.hpp>
 #include <olifilo/errors.hpp>
@@ -57,16 +57,10 @@ future<void> sleep(io::poll::timeout_clock::duration time) noexcept
   return sleep_until(time + io::poll::timeout_clock::now());
 }
 
-class socket_descriptor : public io::file_descriptor
+class stream_socket : public io::socket_descriptor
 {
   public:
-    using io::file_descriptor::file_descriptor;
-};
-
-class stream_socket : public socket_descriptor
-{
-  public:
-    using socket_descriptor::socket_descriptor;
+    using io::socket_descriptor::socket_descriptor;
 
     static expected<stream_socket> create(int domain, int protocol = 0) noexcept
     {
