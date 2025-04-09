@@ -70,6 +70,7 @@
       dontPatchELF = true;
       dontStrip = true;
     };
+    idf-targets = [ "esp32" "esp32c2" "esp32c3" "esp32s2" "esp32s3" "esp32c6" "esp32h2" ];
   in rec {
     packages = rec {
       inherit olifilo;
@@ -87,24 +88,55 @@
             "-DIDF_TARGET=${idf-target}"
           ];
         };
-      }) [ "esp32" "esp32c2" "esp32c3" "esp32s2" "esp32s3" "esp32c6" "esp32h2" ]
+      }) idf-targets
+    );
+
+    images = builtins.listToAttrs (
+      map (idf-target: rec {
+        name = "${idf-target}-olifilo";
+        value =
+          with builtins; with pkgs.lib;
+          let
+            esptool = escapeShellArg (getExe pkgs.esptool);
+            pkg = packages."${name}";
+            flasher_args = fromJSON (readFile "${pkg}/libexec/olifilo/flasher_args.json");
+            flash_chip = escapeShellArg flasher_args.extra_esptool_args.chip;
+            flash_size = escapeShellArg flasher_args.flash_settings.flash_size;
+            flash_items = concatMap (x: x)
+              (map (addr:
+                [addr ("${pkg}/libexec/olifilo/" + (baseNameOf flasher_args.flash_files."${addr}"))])
+                (attrNames flasher_args.flash_files));
+          in pkgs.runCommand "${name}.img" {} ''
+            set -x
+            ${esptool} --chip ${flash_chip} merge_bin -o "$out" --fill-flash-size ${flash_size} ${escapeShellArgs flasher_args.write_flash_args} ${escapeShellArgs flash_items}
+            ${esptool} image_info --version 2 "$out"
+            set +x
+          '';
+      }) idf-targets
     );
 
     checks = {
-      esp32s3-qemu = pkgs.runCommand "esp32s3-olifilo-qemu.log" {} ''
+      esp32s3-qemu =
+      with builtins; with pkgs.lib;
+      let
+        chip = "esp32s3";
+        image = images."${chip}-olifilo";
+        qemu = escapeShellArg (getExe packages."qemu-${chip}");
+        netcat = escapeShellArg (getExe pkgs.netcat);
+      in pkgs.runCommand "${chip}-olifilo-qemu.log" {} ''
         set -x
-        ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.espflash)} save-image --chip esp32s3 --merge ${pkgs.lib.escapeShellArg packages.esp32s3-olifilo}/bin/olifilo.elf --bootloader ${pkgs.lib.escapeShellArg packages.esp32s3-olifilo}/libexec/olifilo/bootloader.bin --flash-size 4mb esp32s3-olifilo.img
-        ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.esptool)} image_info --version 2 esp32s3-olifilo.img
-        ${pkgs.lib.escapeShellArg (pkgs.lib.getExe packages.qemu-esp32s3)} \
-          -machine esp32s3 \
+        # copy to get read/write image
+        install -m 644 ${image} run.img
+        ${qemu} \
+          -machine ${chip} \
           -m 2M \
           -nographic \
           -monitor unix:monitor.sock,server,nowait \
-          -drive file=esp32s3-olifilo.img,if=mtd,format=raw \
+          -drive file=run.img,if=mtd,format=raw \
           -serial "file:$out" \
           &
         sleep 3
-        echo 'quit' | ${pkgs.lib.escapeShellArg (pkgs.lib.getExe pkgs.netcat)} -N -U monitor.sock
+        echo 'quit' | ${netcat} -N -U monitor.sock
         wait
         cat "$out"
         if grep -q '^Backtrace' "$out"; then

@@ -18,5 +18,6 @@ install(FILES
   ${CMAKE_BINARY_DIR}/bootloader/bootloader.bin
   ${CMAKE_BINARY_DIR}/bootloader/bootloader.map
   ${CMAKE_BINARY_DIR}/partition_table/partition-table.bin
+  ${CMAKE_BINARY_DIR}/flasher_args.json
   DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/${PROJECT_NAME}
 )
