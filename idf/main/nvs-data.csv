@@ -1,0 +1,4 @@
+key,type,encoding,value
+olifilo,namespace,,
+sta.ssid,data,string,"Tartarus"
+sta.pswd,data,string,"password123!"

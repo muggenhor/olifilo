@@ -14,6 +14,7 @@
 #include <esp_wifi_default.h>
 #include <nvs.h>
 #include <nvs_flash.h>
+#include <nvs_handle.hpp>
 #include <soc/soc.h>
 
 #include <olifilo/idf/errors.hpp>
@@ -190,13 +191,26 @@ struct networking
       {
         wifi_config_t config = {
           .sta = {
-            .ssid = "Tartarus",
-            .password = "password123!",
             .scan_method = WIFI_ALL_CHANNEL_SCAN,     // Scan all channels instead of stopping after first match
             .sort_method = WIFI_CONNECT_AP_BY_SIGNAL, // Sort by signal strength and keep up to 4 best APs
             .threshold = { .authmode = WIFI_AUTH_WPA2_PSK, },
           },
         };
+
+        esp_err_t status;
+        auto nvs_fs = ::nvs::open_nvs_handle("olifilo", ::NVS_READONLY, &status);
+        if (!nvs_fs)
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+
+        if (status = nvs_fs->get_string("sta.ssid", reinterpret_cast<char*>(&config.sta.ssid), sizeof(config.sta.ssid));
+            status != ESP_OK)
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+
+        if (status = nvs_fs->get_string("sta.pswd", reinterpret_cast<char*>(&config.sta.password), sizeof(config.sta.password));
+            status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+          co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+        else if (status == ESP_ERR_NVS_NOT_FOUND)
+          config.sta.password[0] = '\0';
 
         if (const auto status = esp_wifi_set_config(WIFI_IF_STA, &config); status != ESP_OK)
           co_return {olifilo::unexpect, status, olifilo::esp::error_category()};

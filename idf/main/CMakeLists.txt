@@ -9,3 +9,9 @@ idf_component_register(
     olifilo
 )
 idf_build_set_property(COMPILE_OPTIONS "-Wno-missing-field-initializers" APPEND)
+
+nvs_create_partition_image(nvs nvs-data.csv FLASH_IN_PROJECT)
+install(FILES
+  ${CMAKE_BINARY_DIR}/nvs.bin
+  DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/${CMAKE_PROJECT_NAME}
+)
