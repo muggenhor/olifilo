@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <span>
 #include <system_error>
 #include <tuple>
@@ -166,54 +167,76 @@ class mqtt
       (void)olifilo::io::setsockopt<olifilo::io::sol_ip_tcp::keep_alive_idle>(con._sock.handle(), con.keep_alive * 2);
       (void)olifilo::io::setsockopt<olifilo::io::sol_socket::keep_alive>(con._sock.handle(), true);
 
-      std::uint8_t connect_pkt[27];
-      connect_pkt[0] = std::to_underlying(packet_t::connect) << 4;
-      connect_pkt[1] = 25;
+      {
+        const std::uint8_t connect_var_header[] = {
+          // protocol name
+          0,
+          4,
+          'M',
+          'Q',
+          'T',
+          'T',
 
-      // protocol name
-      connect_pkt[2] = 0;
-      connect_pkt[3] = 4;
-      connect_pkt[4] = 'M';
-      connect_pkt[5] = 'Q';
-      connect_pkt[6] = 'T';
-      connect_pkt[7] = 'T';
+          // protocol level
+          4,
 
-      // protocol level
-      connect_pkt[8] = 4;
+          // connect flags
+          static_cast<std::uint8_t>(0x02 /* want clean session */),
 
-      // connect flags
-      connect_pkt[9] = 0x02 /* want clean session */;
+          // keep alive (seconds, 16 bit big endian)
+          static_cast<std::uint8_t>(con.keep_alive.count() >> 8),
+          static_cast<std::uint8_t>(con.keep_alive.count()),
+        };
+        static_assert(sizeof(connect_var_header) == 10);
 
-      // keep alive (seconds, 16 bit big endian)
-      connect_pkt[10] = static_cast<std::uint8_t>(con.keep_alive.count() >> 8);
-      connect_pkt[11] = static_cast<std::uint8_t>(con.keep_alive.count());
+        // client ID
+        char connect_payload_id_buf[14] = "cpp20coromqtt";
+        if (auto status = std::to_chars(connect_payload_id_buf + 3, connect_payload_id_buf + 5, 20 + id);
+            status.ec != std::errc())
+          co_return {olifilo::unexpect, std::make_error_code(status.ec)};
+        const std::span<const char> connect_payload_id(
+            connect_payload_id_buf, sizeof(connect_payload_id_buf) - 1);
+        const std::uint16_t connect_payload_id_len = htons(
+            static_cast<std::uint16_t>(connect_payload_id.size()));
 
-      // client ID
-      connect_pkt[12] = 0;
-      connect_pkt[13] = 13;
-      connect_pkt[14] = 'c';
-      connect_pkt[15] = 'p';
-      connect_pkt[16] = 'p';
-      connect_pkt[17] = '2' + (id / 10 % 10);
-      connect_pkt[18] = '0' + (id % 10);
-      connect_pkt[19] = 'c';
-      connect_pkt[20] = 'o';
-      connect_pkt[21] = 'r';
-      connect_pkt[22] = 'o';
-      connect_pkt[23] = 'm';
-      connect_pkt[24] = 'q';
-      connect_pkt[25] = 't';
-      connect_pkt[26] = 't';
 
-      // send CONNECT command
-      if (auto r = co_await con._sock.write(as_bytes(std::span(connect_pkt)));
-          !r)
-        co_return r.error();
+        const std::size_t connect_pkt_size = sizeof(connect_var_header)
+          + sizeof(connect_payload_id_len) + connect_payload_id.size()
+          ;
+        if (connect_pkt_size > std::numeric_limits<std::uint32_t>::max())
+          co_return {olifilo::unexpect, std::make_error_code(std::errc::message_size)};
+        auto connect_pkt_sizei = static_cast<std::uint32_t>(connect_pkt_size);
 
-      std::memset(connect_pkt, 0, sizeof(connect_pkt));
+        std::uint8_t connect_fixed_header_buf[5] = {
+          std::to_underlying(packet_t::connect) << 4,
+        };
+        size_t connect_fixed_header_len = 1;
+        // TODO: extract varint encoding to separate function
+        do
+        {
+          std::uint8_t nibble = connect_pkt_sizei & 0x7f;
+          connect_pkt_sizei >>= 7;
+          if (connect_pkt_sizei)
+            nibble |= 0x80;
+          connect_fixed_header_buf[connect_fixed_header_len++] = nibble;
+        }
+        while (connect_pkt_sizei);
+        const std::span connect_fixed_header(connect_fixed_header_buf, connect_fixed_header_len);
+
+        // send CONNECT command
+        if (auto r = co_await con._sock.send({
+                as_bytes(connect_fixed_header),
+                as_bytes(std::span(connect_var_header)),
+                as_bytes(std::span(&connect_payload_id_len, 1)),
+                as_bytes(connect_payload_id),
+              });
+            !r)
+          co_return r.error();
+      }
 
       // expect CONNACK
-      auto ack_pkt = co_await con._sock.read(as_writable_bytes(std::span(connect_pkt, 4)), olifilo::eagerness::lazy);
+      std::byte connack_pkt[4] = {};
+      auto ack_pkt = co_await con._sock.read(as_writable_bytes(std::span(connack_pkt)), olifilo::eagerness::lazy);
       if (!ack_pkt)
         co_return ack_pkt.error();
       else if (ack_pkt->size() != 4)
@@ -237,9 +260,10 @@ class mqtt
 
     olifilo::future<void> disconnect() noexcept
     {
-      std::uint8_t disconnect_pkt[2];
-      disconnect_pkt[0] = std::to_underlying(packet_t::disconnect) << 4;
-      disconnect_pkt[1] = 0;
+      std::uint8_t disconnect_pkt[2] = {
+        std::to_underlying(packet_t::disconnect) << 4,
+        0,
+      };
 
       // send DISCONNECT command
       if (auto r = co_await this->_sock.write(as_bytes(std::span(disconnect_pkt)));
@@ -261,9 +285,10 @@ class mqtt
 
     olifilo::future<void> ping() noexcept
     {
-      std::uint8_t ping_pkt[2];
-      ping_pkt[0] = std::to_underlying(packet_t::pingreq) << 4;
-      ping_pkt[1] = 0;
+      std::uint8_t ping_pkt[2] = {
+        std::to_underlying(packet_t::pingreq) << 4,
+        0,
+      };
 
       // send PINGREQ command
       if (auto r = co_await this->_sock.write(as_bytes(std::span(ping_pkt)));

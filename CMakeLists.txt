@@ -54,6 +54,7 @@ target_sources(${PROJECT_NAME}
     src/coro/wait.cpp
     src/errors.cpp
     src/io/file_descriptor.cpp
+    src/io/socket_descriptor.cpp
     src/io/stream_socket.cpp
 )
 
