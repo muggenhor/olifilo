@@ -180,9 +180,26 @@ std::coroutine_handle<> pop_ready_completion_handler(promise_wait_callgraph& pol
   // We solve this by returning the first ready event handler back to the top-caller and letting
   // it call the event handler, then recursing back into the call tree to find the next ready
   // handler.
-  //
-  // Pop handlers from back to front because we've moved the ones ready first to the back
-  for (auto i = std::ranges::rbegin(polled.callees), last = std::ranges::rend(polled.callees); i != last; ++i)
+
+  // Pop ready *poll* handlers from the back because we've moved the ones ready first to the back
+  if (auto ready_poll = std::ranges::end(polled.callees);
+      ready_poll != std::ranges::begin(polled.callees)
+   && contains<awaitable_poll*>(*--ready_poll))
+  {
+    auto* const handler = get<awaitable_poll*>(*ready_poll);
+    assert(handler != nullptr);
+    if (handler->wait_result.error() != error::uninitialized)
+    {
+      auto waiter = std::exchange(handler->waits_on_me, nullptr);
+      assert(waiter);
+      polled.callees.erase(ready_poll);
+      ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}[{}]resume(waiter={}))\n", ts(), __LINE__, func_name, ready_poll - std::ranges::begin(polled.callees), waiter.address());
+      return waiter;
+    }
+  }
+  
+  // Walk the graph in order to retain the order that a user provided to 'wait', 'when_all' and 'when_any'.
+  for (auto i = std::ranges::begin(polled.callees), last = std::ranges::end(polled.callees); i != last; ++i)
   {
     assert(*i != nullptr);
     if (auto handler = visit(
@@ -191,7 +208,7 @@ std::coroutine_handle<> pop_ready_completion_handler(promise_wait_callgraph& pol
           {
             return pop_ready_completion_handler(*callee);
           },
-          [i = std::next(i).base(), &polled] (awaitable_poll* const handlerp) -> std::coroutine_handle<>
+          [i, &polled] (awaitable_poll* const handlerp) -> std::coroutine_handle<>
           {
             auto& handler = *handlerp;
             if (handler.wait_result.error() == error::uninitialized)
