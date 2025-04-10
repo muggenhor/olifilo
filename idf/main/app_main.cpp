@@ -255,9 +255,17 @@ struct networking
         co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
 
+    std::optional<olifilo::wait_t::clock::time_point> timeout;
     while (true)
     {
-      auto event = co_await wifi_event_reader->receive();
+      auto next_event = wifi_event_reader->receive();
+      if (auto wait = co_await olifilo::wait(olifilo::until::first_completed, next_event, timeout);
+          wait.error() == std::errc::timed_out)
+        co_return network;
+      else if (!wait)
+        co_return wait.error();
+
+      auto event = co_await next_event;
       if (!event)
         co_return {olifilo::unexpect, event.error()};
       const auto& [event_id, event_data] = *event;
@@ -333,8 +341,14 @@ struct networking
           , event_data);
           error)
         co_return {olifilo::unexpect, error};
+
+      using namespace std::literals::chrono_literals;
+
       if (std::holds_alternative<::ip_event_got_ip_t>(event_data))
-        co_return network;
+      {
+        if (!timeout)
+          timeout = olifilo::wait_t::clock::now() + 5s;
+      }
 #if CONFIG_LWIP_IPV6
       else if (auto* const event = std::get_if<::ip_event_got_ip6_t>(&event_data))
       {
@@ -349,7 +363,8 @@ struct networking
           case ESP_IP6_ADDR_IS_SITE_LOCAL:
           case ESP_IP6_ADDR_IS_UNIQUE_LOCAL:
             // got a routable address!
-            co_return network;
+            if (!timeout)
+              timeout = olifilo::wait_t::clock::now() + 5s;
         }
       }
 #endif
