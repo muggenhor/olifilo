@@ -24,6 +24,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <system_error>
@@ -104,6 +105,17 @@ class mqtt
 
     static olifilo::future<mqtt> connect(const char* host, std::uint16_t port, std::uint8_t id) noexcept
     {
+#ifdef ESP_PLATFORM
+      auto nvs_fs = []() -> olifilo::expected<std::unique_ptr<::nvs::NVSHandle>> {
+        esp_err_t err;
+        if (auto nvs_fs = ::nvs::open_nvs_handle("olifilo", ::NVS_READONLY, &err); nvs_fs)
+          return nvs_fs;
+        return {olifilo::unexpect, err, olifilo::esp::error_category()};
+      }();
+      if (!nvs_fs)
+        co_return {olifilo::unexpect, nvs_fs.error()};
+#endif
+
       mqtt con;
       con.keep_alive = decltype(con.keep_alive)(con.keep_alive.count() << (id & 1));
       {
@@ -174,6 +186,45 @@ class mqtt
       (void)olifilo::io::setsockopt<olifilo::io::sol_socket::keep_alive>(con._sock.handle(), true);
 
       {
+        std::optional<std::string> username, password;
+#ifdef ESP_PLATFORM
+        {
+          std::size_t size;
+          if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.username", size);
+              status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+            co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+          else if (status == ESP_OK)
+            username.emplace(size - 1, 0);
+
+          if (username)
+          {
+            if (const auto status = (*nvs_fs)->get_string("mqtt.username", &(*username)[0], username->size() + 1);
+                status != ESP_OK)
+              co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+
+            if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.password", size);
+                status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+            {
+              co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+            }
+            else if (status == ESP_OK)
+            {
+              password.emplace(size - 1, 0);
+              if (const auto status = (*nvs_fs)->get_string("mqtt.password", &(*password)[0], password->size() + 1);
+                  status != ESP_OK)
+                co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+            }
+          }
+        }
+#else
+        if (const char* const user = std::getenv("MQTT_USERNAME"); user && user[0])
+        {
+          username.emplace(user);
+          if (const char* const pass = std::getenv("MQTT_PASSWORD"); pass)
+            password.emplace(pass);
+        }
+#endif
+
         const std::uint8_t connect_var_header[] = {
           // protocol name
           0,
@@ -187,7 +238,7 @@ class mqtt
           4,
 
           // connect flags
-          static_cast<std::uint8_t>(0x02 /* want clean session */),
+          static_cast<std::uint8_t>((username ? 0x80 : 0) /* user name follows */ | (password ? 0x40 : 0) /* password follows */ | 0x02 /* want clean session */),
 
           // keep alive (seconds, 16 bit big endian)
           static_cast<std::uint8_t>(con.keep_alive.count() >> 8),
@@ -205,9 +256,18 @@ class mqtt
         const std::uint16_t connect_payload_id_len = htons(
             static_cast<std::uint16_t>(connect_payload_id.size()));
 
+        // credentials
+        if (username && username->size() > std::numeric_limits<std::uint16_t>::max())
+          co_return {olifilo::unexpect, std::make_error_code(std::errc::invalid_argument)};
+        if (password && password->size() > std::numeric_limits<std::uint16_t>::max())
+          co_return {olifilo::unexpect, std::make_error_code(std::errc::invalid_argument)};
+        const std::uint16_t connect_payload_username_len = htons(static_cast<std::uint16_t>(username ? username->size() : 0));
+        const std::uint16_t connect_payload_password_len = htons(static_cast<std::uint16_t>(password ? password->size() : 0));
 
         const std::size_t connect_pkt_size = sizeof(connect_var_header)
           + sizeof(connect_payload_id_len) + connect_payload_id.size()
+          + (username ? sizeof(connect_payload_username_len) + username->size() : 0)
+          + (password ? sizeof(connect_payload_password_len) + password->size() : 0)
           ;
         if (connect_pkt_size > std::numeric_limits<std::uint32_t>::max())
           co_return {olifilo::unexpect, std::make_error_code(std::errc::message_size)};
@@ -235,6 +295,10 @@ class mqtt
                 as_bytes(std::span(connect_var_header)),
                 as_bytes(std::span(&connect_payload_id_len, 1)),
                 as_bytes(connect_payload_id),
+                as_bytes(std::span(&connect_payload_username_len, username ? 1 : 0)),
+                as_bytes(username ? std::span(*username) : std::span<char>()),
+                as_bytes(std::span(&connect_payload_password_len, password ? 1 : 0)),
+                as_bytes(password ? std::span(*password) : std::span<char>()),
               });
             !r)
           co_return r.error();

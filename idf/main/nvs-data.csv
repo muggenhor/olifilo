@@ -1,5 +1,7 @@
 key,type,encoding,value
 olifilo,namespace,,
+mqtt.username,data,string,"user"
+mqtt.password,data,string,"pass"
 mqtt.host,data,string,"fdce:1234:5678::1"
 mqtt.port,data,u16,1883
 sta.ssid,data,string,"Tartarus"
