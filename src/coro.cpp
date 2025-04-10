@@ -25,17 +25,23 @@
 #include <iterator>
 #include <limits>
 #include <span>
+#include <string>
 #include <system_error>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include <arpa/inet.h>
+#include <inttypes.h>
 #include <netdb.h>
 #include <unistd.h>
 
 #ifdef ESP_PLATFORM
 #include <esp_log.h>
+#include <nvs_handle.hpp>
+#else
+#include <cstdlib>
+#include <cstring>
 #endif
 
 namespace olifilo
@@ -321,7 +327,68 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
 
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({})\n", ts(), __LINE__, "do_mqtt", id);
 
-  auto r = co_await mqtt::connect("fdce:1234:5678::1", 1883, id);
+  std::string mqtt_host("fdce:1234:5678::1");
+  std::uint16_t mqtt_port = 1883;
+#ifdef ESP_PLATFORM
+  if (auto nvs_fs = []() -> olifilo::expected<std::unique_ptr<::nvs::NVSHandle>> {
+      esp_err_t err;
+      if (auto nvs_fs = ::nvs::open_nvs_handle("olifilo", ::NVS_READONLY, &err); nvs_fs)
+        return nvs_fs;
+      return {olifilo::unexpect, err, olifilo::esp::error_category()};
+    }(); !nvs_fs && nvs_fs.error().value() != ESP_ERR_NVS_NOT_FOUND)
+  {
+    co_return {olifilo::unexpect, nvs_fs.error()};
+  }
+  else if (nvs_fs)
+  {
+    if (const auto status = (*nvs_fs)->get_item("mqtt.port", mqtt_port);
+        status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+    {
+      ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.port': %s"
+          , std::error_code(status, olifilo::esp::error_category()).message().c_str());
+      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+    }
+
+    ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.port=%" PRIu16, mqtt_port);
+
+    std::size_t size;
+    if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.host", size);
+        status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+    {
+      ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining size of 'mqtt.host': %s"
+          , std::error_code(status, olifilo::esp::error_category()).message().c_str());
+      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+    }
+    else if (status == ESP_OK)
+    {
+      ESP_LOGD("olifilo-coro", "do_mqtt: sizeof(mqtt.host)=%zu", size);
+      mqtt_host.resize(size - 1);
+      if (const auto status = (*nvs_fs)->get_string("mqtt.host", &mqtt_host[0], mqtt_host.size() + 1);
+          status != ESP_OK)
+      {
+        ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.host': %s"
+            , std::error_code(status, olifilo::esp::error_category()).message().c_str());
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+      }
+
+      ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.host=\"%s\"", mqtt_host.c_str());
+    }
+  }
+#else
+  if (const char* const host = std::getenv("MQTT_HOST"); host && host[0])
+    mqtt_host = host;
+  if (const char* const port = std::getenv("MQTT_PORT"); port && port[0])
+  {
+    if (auto status = std::from_chars(port, port + std::strlen(port), mqtt_port);
+        status.ec != std::errc())
+      co_return {olifilo::unexpect, std::make_error_code(status.ec)};
+    else if (status.ptr != port + std::strlen(port)
+          || mqtt_port <= 0)
+      co_return {olifilo::unexpect, std::make_error_code(std::errc::invalid_argument)};
+  }
+#endif
+
+  auto r = co_await mqtt::connect(mqtt_host.c_str(), mqtt_port, id);
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({}) r = {}\n", ts(), __LINE__, "do_mqtt", id, static_cast<bool>(r));
   if (!r)
     co_return r;
