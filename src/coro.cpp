@@ -103,19 +103,13 @@ class mqtt
 
     std::chrono::duration<std::uint16_t> keep_alive{15};
 
-    static olifilo::future<mqtt> connect(const char* host, std::uint16_t port, std::uint8_t id) noexcept
+    static olifilo::future<mqtt> connect(
+        const char*                     host
+      , std::uint16_t                   port
+      , std::uint8_t                    id
+      , std::optional<std::string_view> username = {}
+      , std::optional<std::string_view> password = {}) noexcept
     {
-#ifdef ESP_PLATFORM
-      auto nvs_fs = []() -> olifilo::expected<std::unique_ptr<::nvs::NVSHandle>> {
-        esp_err_t err;
-        if (auto nvs_fs = ::nvs::open_nvs_handle("olifilo", ::NVS_READONLY, &err); nvs_fs)
-          return nvs_fs;
-        return {olifilo::unexpect, err, olifilo::esp::error_category()};
-      }();
-      if (!nvs_fs)
-        co_return {olifilo::unexpect, nvs_fs.error()};
-#endif
-
       mqtt con;
       con.keep_alive = decltype(con.keep_alive)(con.keep_alive.count() << (id & 1));
       {
@@ -186,45 +180,6 @@ class mqtt
       (void)olifilo::io::setsockopt<olifilo::io::sol_socket::keep_alive>(con._sock.handle(), true);
 
       {
-        std::optional<std::string> username, password;
-#ifdef ESP_PLATFORM
-        {
-          std::size_t size;
-          if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.username", size);
-              status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
-            co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-          else if (status == ESP_OK)
-            username.emplace(size - 1, 0);
-
-          if (username)
-          {
-            if (const auto status = (*nvs_fs)->get_string("mqtt.username", &(*username)[0], username->size() + 1);
-                status != ESP_OK)
-              co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-
-            if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.password", size);
-                status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
-            {
-              co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-            }
-            else if (status == ESP_OK)
-            {
-              password.emplace(size - 1, 0);
-              if (const auto status = (*nvs_fs)->get_string("mqtt.password", &(*password)[0], password->size() + 1);
-                  status != ESP_OK)
-                co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
-            }
-          }
-        }
-#else
-        if (const char* const user = std::getenv("MQTT_USERNAME"); user && user[0])
-        {
-          username.emplace(user);
-          if (const char* const pass = std::getenv("MQTT_PASSWORD"); pass)
-            password.emplace(pass);
-        }
-#endif
-
         const std::uint8_t connect_var_header[] = {
           // protocol name
           0,
@@ -391,8 +346,12 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
 
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({})\n", ts(), __LINE__, "do_mqtt", id);
 
-  std::string mqtt_host("fdce:1234:5678::1");
-  std::uint16_t mqtt_port = 1883;
+  static constexpr char mqtt_default_host[] = "fdce:1234:5678::1";
+  std::string_view host = mqtt_default_host;
+  std::uint16_t port = 1883;
+  std::optional<std::string_view> username;
+  std::optional<std::string_view> password;
+  std::string mqtt_con_data; // buffer to hold the above views in a single allocation
 #ifdef ESP_PLATFORM
   if (auto nvs_fs = []() -> olifilo::expected<std::unique_ptr<::nvs::NVSHandle>> {
       esp_err_t err;
@@ -405,7 +364,7 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
   }
   else if (nvs_fs)
   {
-    if (const auto status = (*nvs_fs)->get_item("mqtt.port", mqtt_port);
+    if (const auto status = (*nvs_fs)->get_item("mqtt.port", port);
         status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
     {
       ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.port': %s"
@@ -413,46 +372,116 @@ olifilo::future<void> do_mqtt(std::uint8_t id) noexcept
       co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
     }
 
-    ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.port=%" PRIu16, mqtt_port);
+    ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.port=%" PRIu16, port);
 
-    std::size_t size;
-    if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.host", size);
-        status != ESP_OK && status != ESP_ERR_NVS_NOT_FOUND)
+    olifilo::expected<std::size_t> host_size(std::in_place);
+    if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.host", *host_size);
+        status != ESP_OK)
+      host_size = {olifilo::unexpect, status, olifilo::esp::error_category()};
+    if (!host_size && host_size.error() != std::errc::no_such_file_or_directory)
     {
       ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining size of 'mqtt.host': %s"
-          , std::error_code(status, olifilo::esp::error_category()).message().c_str());
-      co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+          , host_size.error().message().c_str());
+      co_return host_size.error();
     }
-    else if (status == ESP_OK)
+
+    olifilo::expected<std::size_t> user_size(std::in_place);
+    if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.username", *user_size);
+        status != ESP_OK)
+      user_size = {olifilo::unexpect, status, olifilo::esp::error_category()};
+    if (!user_size && user_size.error() != std::errc::no_such_file_or_directory)
     {
-      ESP_LOGD("olifilo-coro", "do_mqtt: sizeof(mqtt.host)=%zu", size);
-      mqtt_host.resize(size - 1);
-      if (const auto status = (*nvs_fs)->get_string("mqtt.host", &mqtt_host[0], mqtt_host.size() + 1);
+      ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining size of 'mqtt.username': %s"
+          , user_size.error().message().c_str());
+      co_return user_size.error();
+    }
+
+    olifilo::expected<std::size_t> pass_size(std::in_place);
+    if (const auto status = (*nvs_fs)->get_item_size(::nvs::ItemType::SZ, "mqtt.password", *pass_size);
+        status != ESP_OK)
+      pass_size = {olifilo::unexpect, status, olifilo::esp::error_category()};
+    if (!pass_size && pass_size.error() != std::errc::no_such_file_or_directory)
+    {
+      ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining size of 'mqtt.password': %s"
+          , pass_size.error().message().c_str());
+      co_return pass_size.error();
+    }
+
+    mqtt_con_data.resize(0
+      + (user_size ? *user_size - 1 : 0)
+      + (pass_size ? *pass_size - 1 : 0)
+      + (host_size ? *host_size - 1 : 0)
+      );
+
+    char* storage_start = &mqtt_con_data[0];
+    if (user_size)
+    {
+      ESP_LOGD("olifilo-coro", "do_mqtt: sizeof(mqtt.username)=%zu", *user_size - 1);
+      if (const auto status = (*nvs_fs)->get_string("mqtt.username", storage_start, *user_size);
+          status != ESP_OK)
+      {
+        ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.username': %s"
+            , esp_err_to_name(status));
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+      }
+      username = std::string_view(storage_start, *user_size - 1);
+      storage_start += username->size();
+
+      ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.username=\"%.*s\"", username->size(), username->data());
+    }
+    if (pass_size)
+    {
+      ESP_LOGD("olifilo-coro", "do_mqtt: sizeof(mqtt.password)=%zu", *pass_size - 1);
+      if (const auto status = (*nvs_fs)->get_string("mqtt.password", storage_start, *pass_size);
+          status != ESP_OK)
+      {
+        ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.password': %s"
+            , esp_err_to_name(status));
+        co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
+      }
+      password = std::string_view(storage_start, *pass_size - 1);
+      storage_start += password->size();
+
+      ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.password=\"%.*s\"", password->size(), password->data());
+    }
+    if (host_size) // NOTE: 'host' must be the last item in 'mqtt_con_data' to ensure it's NUL terminated
+    {
+      ESP_LOGD("olifilo-coro", "do_mqtt: sizeof(mqtt.host)=%zu", *host_size - 1);
+      if (const auto status = (*nvs_fs)->get_string("mqtt.host", storage_start, *host_size);
           status != ESP_OK)
       {
         ESP_LOGE("olifilo-coro", "do_mqtt: error while obtaining 'mqtt.host': %s"
-            , std::error_code(status, olifilo::esp::error_category()).message().c_str());
+            , esp_err_to_name(status));
         co_return {olifilo::unexpect, status, olifilo::esp::error_category()};
       }
+      host = std::string_view(storage_start, *host_size - 1);
+      storage_start += *host_size;
 
-      ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.host=\"%s\"", mqtt_host.c_str());
+      ESP_LOGD("olifilo-coro", "do_mqtt: mqtt.host=\"%.*s\"", host.size(), host.data());
     }
   }
 #else
-  if (const char* const host = std::getenv("MQTT_HOST"); host && host[0])
-    mqtt_host = host;
-  if (const char* const port = std::getenv("MQTT_PORT"); port && port[0])
+  if (const char* const e_host = std::getenv("MQTT_HOST"); e_host && e_host[0])
+    host = e_host;
+  if (const char* const e_port = std::getenv("MQTT_PORT"); e_port && e_port[0])
   {
-    if (auto status = std::from_chars(port, port + std::strlen(port), mqtt_port);
+    const auto portlen = std::strlen(e_port);
+    if (auto status = std::from_chars(e_port, e_port + portlen, port);
         status.ec != std::errc())
       co_return {olifilo::unexpect, std::make_error_code(status.ec)};
-    else if (status.ptr != port + std::strlen(port)
-          || mqtt_port <= 0)
+    else if (status.ptr != e_port + portlen
+          || port <= 0)
       co_return {olifilo::unexpect, std::make_error_code(std::errc::invalid_argument)};
+  }
+  if (const char* const user = std::getenv("MQTT_USERNAME"); user && user[0])
+  {
+    username = user;
+    if (const char* const pass = std::getenv("MQTT_PASSWORD"); pass)
+      password = pass;
   }
 #endif
 
-  auto r = co_await mqtt::connect(mqtt_host.c_str(), mqtt_port, id);
+  auto r = co_await mqtt::connect(host.data(), port, id, username, password);
   ////std::format_to(std::ostreambuf_iterator(std::cout), "{:>7} {:4}: {:128.128}({}) r = {}\n", ts(), __LINE__, "do_mqtt", id, static_cast<bool>(r));
   if (!r)
     co_return r;
