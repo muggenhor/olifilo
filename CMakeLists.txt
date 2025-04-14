@@ -96,6 +96,7 @@ target_sources(${PROJECT_NAME}
       include/olifilo/io/types.hpp
       include/olifilo/io/write.hpp
       include/olifilo/mqtt.hpp
+      include/olifilo/mqtt/errors.hpp
 )
 
 include(GNUInstallDirs)

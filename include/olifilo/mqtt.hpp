@@ -44,7 +44,12 @@ class mqtt
     future<void> disconnect() noexcept;
     future<void> ping() noexcept;
 
+    mqtt(mqtt&&) = default;
+    mqtt& operator=(mqtt&&) = default;
+
   private:
+    mqtt() = default;
+
     stream_socket _sock;
 };
 }  // namespace olifilo::io

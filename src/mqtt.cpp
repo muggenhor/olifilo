@@ -6,12 +6,15 @@
 #include <olifilo/io/sockopt.hpp>
 #include <olifilo/io/sockopts/socket.hpp>
 #include <olifilo/io/sockopts/tcp.hpp>
+#include <olifilo/mqtt/errors.hpp>
 
 #include <iterator>
 
 #include <netdb.h>
 
 namespace olifilo::io
+{
+namespace
 {
 template <std::output_iterator<std::byte> Out>
 Out serialize_remaining_length(Out out, std::uint32_t value)
@@ -26,6 +29,33 @@ Out serialize_remaining_length(Out out, std::uint32_t value)
   }
 
   return out;
+}
+}  // anonymous namespace
+
+const char* mqtt_error_category_t::name() const noexcept
+{
+  return "MQTT-error";
+}
+
+std::string mqtt_error_category_t::message(int ev) const
+{
+  using enum mqtt_error;
+
+  switch (static_cast<mqtt_error>(ev))
+  {
+    case unacceptable_protocol_version:
+      return "server doesn't support the MQTT requested protocol version";
+    case client_identifier_not_allowed:
+      return "requested client identifier disallowed";
+    case service_unavailable:
+      return "service unavailable";
+    case bad_username_or_password:
+      return "bad username or password";
+    case client_not_authorized:
+      return "client is not authorized";
+  }
+
+  return "(unrecognized error)";
 }
 
 future<mqtt> mqtt::connect(
@@ -201,9 +231,10 @@ future<mqtt> mqtt::connect(
   if ((static_cast<std::uint8_t>((*ack_pkt)[2]) & 0x01) != 0) // session-present flag must be unset (i.e. we MUST NOT have a server-side session)
     co_return std::make_error_code(std::errc::bad_message);
 
-  const auto connect_return_code = static_cast<std::uint8_t>((*ack_pkt)[3]);
-  if (connect_return_code != 0)
-    co_return std::error_code(connect_return_code, std::generic_category() /* mqtt::error_category() */);
+  const auto connect_return_code = make_error_code(
+      static_cast<mqtt_error>(static_cast<std::uint8_t>((*ack_pkt)[3])));
+  if (connect_return_code)
+    co_return connect_return_code;
 
   co_return con;
 }
