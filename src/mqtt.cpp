@@ -16,17 +16,20 @@ namespace olifilo::io
 {
 namespace
 {
-template <std::output_iterator<std::byte> Out>
-Out serialize_remaining_length(Out out, std::uint32_t value)
+template <typename Out>
+  requires(std::output_iterator<Out, std::byte>
+        || std::output_iterator<Out, std::uint8_t>)
+constexpr Out serialize_remaining_length(Out out, std::uint32_t value)
 {
-  *out++ = static_cast<std::byte>(value & 0x7f);
-
-  value >>= 7;
-  while (value)
+  do
   {
-    *out++ = static_cast<std::byte>((value & 0x7f) | 0x80);
+    auto nibble = static_cast<std::uint8_t>(value & 0x7f);
     value >>= 7;
+    if (value)
+      nibble |= 0x80;
+    *out++ = static_cast<std::iter_value_t<Out>>(nibble);
   }
+  while (value);
 
   return out;
 }
@@ -180,24 +183,15 @@ future<mqtt> mqtt::connect(
       + (password ? sizeof(connect_payload_password_len) + password->size() : 0)
       ;
     if (connect_pkt_size > std::numeric_limits<std::uint32_t>::max())
-      co_return {unexpect, std::make_error_code(std::errc::message_size)};
-    auto connect_pkt_sizei = static_cast<std::uint32_t>(connect_pkt_size);
+      co_return {unexpect, make_error_code(std::errc::message_size)};
 
     std::uint8_t connect_fixed_header_buf[5] = {
       std::to_underlying(packet_t::connect) << 4,
     };
-    size_t connect_fixed_header_len = 1;
-    // TODO: extract varint encoding to separate function
-    do
-    {
-      std::uint8_t nibble = connect_pkt_sizei & 0x7f;
-      connect_pkt_sizei >>= 7;
-      if (connect_pkt_sizei)
-        nibble |= 0x80;
-      connect_fixed_header_buf[connect_fixed_header_len++] = nibble;
-    }
-    while (connect_pkt_sizei);
-    const std::span connect_fixed_header(connect_fixed_header_buf, connect_fixed_header_len);
+    const std::span connect_fixed_header(
+        connect_fixed_header_buf
+      , serialize_remaining_length(connect_fixed_header_buf + 1, static_cast<std::uint32_t>(connect_pkt_size))
+      );
 
     // send CONNECT command
     if (auto r = co_await con._sock.send({
