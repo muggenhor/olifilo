@@ -26,6 +26,14 @@
 
     pkgs = import nixpkgs {
       inherit system;
+      # For esptool (https://github.com/mirrexagon/nixpkgs-esp-dev/issues/109)
+      config.permittedInsecurePackages = [
+        "python3.12-ecdsa-0.19.1"
+        "python3.13-ecdsa-0.19.1"
+      ];
+      overlays = [
+        esp-idf-dev.overlays.default
+      ];
     };
     gcc =
       if builtins.compareVersions "14" pkgs.gcc.version <= 0
@@ -71,6 +79,17 @@
       dontStrip = true;
     };
     idf-targets = [ "esp32" "esp32c2" "esp32c3" "esp32s2" "esp32s3" "esp32c6" "esp32h2" ];
+    idf-arch = {
+      esp32   = "xtensa";
+      esp32s2 = "xtensa";
+      esp32s3 = "xtensa";
+      esp32c2 = "riscv";
+      esp32c3 = "riscv";
+      esp32c6 = "riscv";
+      esp32h2 = "riscv";
+      esp32p4 = "riscv";
+    };
+
   in rec {
     packages = rec {
       inherit olifilo;
@@ -82,7 +101,7 @@
         name = "${idf-target}-olifilo";
         value = idf-olifilo.override rec {
           prefix = "${idf-target}-";
-          compiler = esp-idf-dev.packages.${system}."esp-idf-${idf-target}";
+          compiler = pkgs."esp-idf-${idf-arch.${idf-target}}";
           toolchain = [
             "-DCMAKE_TOOLCHAIN_FILE=${compiler}/tools/cmake/toolchain-${idf-target}.cmake"
             "-DIDF_TARGET=${idf-target}"
