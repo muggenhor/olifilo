@@ -45,11 +45,11 @@
       else pkgs.llvmPackages_18;
     olifilo = pkgs.callPackage ({
       version ? versionOf self,
-      prefix ? "",
+      suffix ? "",
       compiler ? gcc,
       toolchain ? [],
     }: pkgs.stdenv.mkDerivation {
-      pname = "${prefix}olifilo";
+      pname = "olifilo${suffix}";
       inherit version;
 
       src = ./.;
@@ -98,9 +98,9 @@
       qemu-esp32s3 = qemu-esp32;
     } // builtins.listToAttrs (
       map (idf-target: {
-        name = "${idf-target}-olifilo";
+        name = "olifilo-${idf-target}";
         value = (idf-olifilo.override rec {
-          prefix = "${idf-target}-";
+          suffix = "-${idf-target}";
           compiler = pkgs."esp-idf-${idf-arch.${idf-target}}";
           toolchain = [
             "-DCMAKE_TOOLCHAIN_FILE=${compiler}/tools/cmake/toolchain-${idf-target}.cmake"
@@ -116,7 +116,7 @@
 
     images = builtins.listToAttrs (
       map (idf-target: rec {
-        name = "${idf-target}-olifilo";
+        name = "olifilo-${idf-target}";
         value =
           with builtins; with pkgs.lib;
           let
@@ -143,10 +143,10 @@
       with builtins; with pkgs.lib;
       let
         chip = "esp32s3";
-        image = images."${chip}-olifilo";
+        image = images."olifilo-${chip}";
         qemu = escapeShellArg (getExe packages."qemu-${chip}");
         netcat = escapeShellArg (getExe pkgs.netcat);
-      in pkgs.runCommand "${chip}-olifilo-qemu.log" {} ''
+      in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
         set -x
         # copy to get read/write image
         install -m 644 ${image} run.img
