@@ -116,31 +116,28 @@
           prePatch = oldAttrs.prePatch + pkgs.lib.optionalString ((idf-target == "esp32s3") || (idf-target == "esp32c3")) ''
             echo 'CONFIG_ETH_USE_OPENETH=y' >> sdkconfig.defaults
           '';
-        });
-      }) idf-targets
-    );
 
-    images = builtins.listToAttrs (
-      map (idf-target: rec {
-        name = "olifilo-${idf-target}";
-        value =
-          with builtins; with pkgs.lib;
-          let
-            esptool = escapeShellArg (getExe pkgs.esptool);
-            pkg = packages."${name}";
-            flasher_args = fromJSON (readFile "${pkg}/libexec/olifilo/flasher_args.json");
-            flash_chip = escapeShellArg flasher_args.extra_esptool_args.chip;
-            flash_size = escapeShellArg flasher_args.flash_settings.flash_size;
-            flash_items = concatMap (x: x)
-              (map (addr:
-                [addr ("${pkg}/libexec/olifilo/" + (baseNameOf flasher_args.flash_files."${addr}"))])
-                (attrNames flasher_args.flash_files));
-          in pkgs.runCommand "${name}.img" {} ''
+          # Tack on an image suitable for QEMU as separate output
+          outputs = [ "out" "img" ];
+
+          nativeBuildInputs = with pkgs; (oldAttrs.nativeBuildInputs or []) ++ [
+            jq
+          ];
+          postInstall = (oldAttrs.postInstall or "") + ''
             set -x
-            ${esptool} --chip ${flash_chip} merge_bin -o "$out" --fill-flash-size ${flash_size} ${escapeShellArgs flasher_args.write_flash_args} ${escapeShellArgs flash_items}
-            ${esptool} image_info --version 2 "$out"
+            flasher_args="$out/libexec/olifilo/flasher_args.json"
+            flash_chip="$(jq -r .extra_esptool_args.chip "$flasher_args")"
+            flash_size="$(jq -r .flash_settings.flash_size "$flasher_args")"
+            flash_items=()
+            for addr in $(jq -r '.flash_files|keys[]' "$flasher_args"); do
+              fname="$(jq -r --arg addr "$addr" '.flash_files[$addr]' "$flasher_args")"
+              flash_items+=("$addr" "$out/libexec/olifilo/$(basename "$fname")")
+            done
+            esptool.py --chip "$flash_chip" merge_bin -o "$img" --fill-flash-size "$flash_size" $(jq -r '.write_flash_args[]' "$flasher_args") "''${flash_items[@]}"
+            esptool.py image_info --version 2 "$img"
             set +x
           '';
+        });
       }) idf-targets
     );
 
@@ -150,7 +147,7 @@
         value =
         with builtins; with pkgs.lib;
         let
-          image = images."olifilo-${chip}";
+          image = packages."olifilo-${chip}".img;
           qemu = escapeShellArg (getExe idf-qemu.${chip});
           netcat = escapeShellArg (getExe pkgs.netcat);
         in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
