@@ -141,21 +141,29 @@
       }) idf-targets
     );
 
-    checks = builtins.listToAttrs (
+    checks = let
+      expected-roms = {
+        esp32s3 = "esp32s3-20210327";
+        esp32c3 = "esp32c3-api1-20210207";
+      };
+    in builtins.listToAttrs (
       map (chip: {
         name = "${chip}-qemu";
         value =
         with builtins; with pkgs.lib;
         let
+        in pkgs.runCommand "olifilo-${chip}-qemu.log" {
+          inherit chip;
           image = packages."olifilo-${chip}".img;
-          qemu = escapeShellArg (getExe idf-qemu.${chip});
-          netcat = escapeShellArg (getExe pkgs.netcat);
-        in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
+          qemu = getExe idf-qemu.${chip};
+          netcat = getExe pkgs.netcat;
+          rom = expected-roms.${chip};
+        } ''
           set -x
           # copy to get read/write image
-          install -m 644 ${image} run.img
-          ${qemu} \
-            -machine ${chip} \
+          install -m 644 "$image" run.img
+          "$qemu" \
+            -machine "$chip" \
             -m 2M \
             -nographic \
             -monitor unix:monitor.sock,server,nowait \
@@ -163,17 +171,17 @@
             -serial "file:$out" \
             &
           sleep 3
-          echo 'quit' | ${netcat} -N -U monitor.sock
+          echo 'quit' | "$netcat" -N -U monitor.sock
           wait
           cat "$out"
           if grep -q '^Backtrace' "$out"; then
             exit 1
           fi
-          grep 'ESP-ROM:${chip}-20210327' "$out"
+          grep "^ESP-ROM:$rom" "$out"
           grep 'Calling app_main()' "$out"
           set +x
         '';
-      }) [ "esp32s3" "esp32c3" ]
+      }) (builtins.attrNames expected-roms)
     );
   });
 }
