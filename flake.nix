@@ -33,6 +33,7 @@
       ];
       overlays = [
         esp-idf-dev.overlays.default
+        esp-qemu.overlays.default
       ];
     };
     gcc =
@@ -89,12 +90,17 @@
       esp32h2 = "riscv";
       esp32p4 = "riscv";
     };
+    idf-qemu = with pkgs; {
+      esp32   = qemu-esp32;
+      esp32s3 = qemu-esp32;
+      esp32c3 = qemu-esp32c3;
+    };
 
   in rec {
     packages = rec {
       inherit olifilo;
       default = olifilo;
-      inherit (esp-qemu.packages.${system}) qemu-espressif qemu-esp32 qemu-esp32c3;
+      inherit (pkgs) qemu-espressif qemu-esp32 qemu-esp32c3;
       qemu-esp32s3 = qemu-esp32;
     } // builtins.listToAttrs (
       map (idf-target: {
@@ -145,7 +151,7 @@
         with builtins; with pkgs.lib;
         let
           image = images."olifilo-${chip}";
-          qemu = escapeShellArg (getExe packages."qemu-${chip}");
+          qemu = escapeShellArg (getExe idf-qemu.${chip});
           netcat = escapeShellArg (getExe pkgs.netcat);
         in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
           set -x

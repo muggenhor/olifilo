@@ -30,11 +30,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1737750036,
-        "narHash": "sha256-5sBFrzw4YrpxHXO9kpssZsDAa6Y1QUBVY87UlxD3hYs=",
-        "owner": "muggenhor",
-        "repo": "esp-qemu-nix",
-        "rev": "c4cd9c0b0de4ac976ed37f95b2e8c092933cc40b",
+        "lastModified": 1765881801,
+        "narHash": "sha256-/A9IquhK9N6BlqF3KFcVjIjKuNuoJHcC94mcdkldv9w=",
+        "owner": "SFrijters",
+        "repo": "nix-qemu-espressif",
+        "rev": "2052804efa7019cb1051c8a3ad7113e7d1203676",
         "type": "github"
       },
       "original": {
