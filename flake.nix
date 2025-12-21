@@ -138,37 +138,39 @@
       }) idf-targets
     );
 
-    checks = {
-      esp32s3-qemu =
-      with builtins; with pkgs.lib;
-      let
-        chip = "esp32s3";
-        image = images."olifilo-${chip}";
-        qemu = escapeShellArg (getExe packages."qemu-${chip}");
-        netcat = escapeShellArg (getExe pkgs.netcat);
-      in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
-        set -x
-        # copy to get read/write image
-        install -m 644 ${image} run.img
-        ${qemu} \
-          -machine ${chip} \
-          -m 2M \
-          -nographic \
-          -monitor unix:monitor.sock,server,nowait \
-          -drive file=run.img,if=mtd,format=raw \
-          -serial "file:$out" \
-          &
-        sleep 3
-        echo 'quit' | ${netcat} -N -U monitor.sock
-        wait
-        cat "$out"
-        if grep -q '^Backtrace' "$out"; then
-          exit 1
-        fi
-        grep 'ESP-ROM:esp32s3-20210327' "$out"
-        grep 'Calling app_main()' "$out"
-        set +x
-      '';
-    };
+    checks = builtins.listToAttrs (
+      map (chip: {
+        name = "${chip}-qemu";
+        value =
+        with builtins; with pkgs.lib;
+        let
+          image = images."olifilo-${chip}";
+          qemu = escapeShellArg (getExe packages."qemu-${chip}");
+          netcat = escapeShellArg (getExe pkgs.netcat);
+        in pkgs.runCommand "olifilo-${chip}-qemu.log" {} ''
+          set -x
+          # copy to get read/write image
+          install -m 644 ${image} run.img
+          ${qemu} \
+            -machine ${chip} \
+            -m 2M \
+            -nographic \
+            -monitor unix:monitor.sock,server,nowait \
+            -drive file=run.img,if=mtd,format=raw \
+            -serial "file:$out" \
+            &
+          sleep 3
+          echo 'quit' | ${netcat} -N -U monitor.sock
+          wait
+          cat "$out"
+          if grep -q '^Backtrace' "$out"; then
+            exit 1
+          fi
+          grep 'ESP-ROM:${chip}-20210327' "$out"
+          grep 'Calling app_main()' "$out"
+          set +x
+        '';
+      }) [ "esp32s3" "esp32c3" ]
+    );
   });
 }
