@@ -99,14 +99,18 @@
     } // builtins.listToAttrs (
       map (idf-target: {
         name = "${idf-target}-olifilo";
-        value = idf-olifilo.override rec {
+        value = (idf-olifilo.override rec {
           prefix = "${idf-target}-";
           compiler = pkgs."esp-idf-${idf-arch.${idf-target}}";
           toolchain = [
             "-DCMAKE_TOOLCHAIN_FILE=${compiler}/tools/cmake/toolchain-${idf-target}.cmake"
             "-DIDF_TARGET=${idf-target}"
           ];
-        };
+        }).overrideAttrs (oldAttrs: {
+          prePatch = oldAttrs.prePatch + pkgs.lib.optionalString ((idf-target == "esp32s3") || (idf-target == "esp32c3")) ''
+            echo 'CONFIG_ETH_USE_OPENETH=y' >> sdkconfig.defaults
+          '';
+        });
       }) idf-targets
     );
 
