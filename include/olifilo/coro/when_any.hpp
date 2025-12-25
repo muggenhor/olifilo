@@ -54,7 +54,7 @@ struct when_any_t
   }
 
   template <typename... Ts>
-  requires(detail::timeout<detail::last_type_of<Ts&&...>>
+  requires(detail::timeout<std::decay_t<detail::last_type_of<Ts&&...>>>
        && detail::all_are_future<detail::everything_except_last<std::decay_t<Ts>...>>)
   auto
     static constexpr operator()(Ts&&... futures_with_timeout_at_end) noexcept

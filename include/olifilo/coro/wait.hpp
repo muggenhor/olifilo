@@ -99,7 +99,7 @@ struct wait_t
     ) noexcept;
 
   template <typename... Ts>
-  requires(detail::timeout<detail::last_type_of<Ts...>>
+  requires(detail::timeout<std::decay_t<detail::last_type_of<Ts...>>>
        && detail::all_are_future<detail::everything_except_last<std::remove_reference_t<Ts>...>>
        && detail::all_are_lvalue_reference<detail::everything_except_last<Ts...>>)
   future<std::size_t>

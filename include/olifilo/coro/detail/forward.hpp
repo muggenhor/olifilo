@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <tuple>
 #include <type_traits>
 
 namespace olifilo
@@ -40,7 +41,7 @@ constexpr decltype(auto) forward_last(Args&&... args) noexcept
 }
 
 template <typename... Ts>
-using last_type_of = std::decay_t<decltype(forward_last(std::declval<Ts>()...))>;
+using last_type_of = std::tuple_element_t<sizeof...(Ts) - 1, std::tuple<Ts...>>;
 
 template <typename T, typename IdxSeq>
 struct everything_with_idx;
