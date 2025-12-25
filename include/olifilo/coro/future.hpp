@@ -102,7 +102,7 @@ class [[nodiscard("future not awaited")]] future
     friend class detail::promise;
     friend wait_t;
 
-    constexpr future(std::coroutine_handle<detail::promise<T>> handle) noexcept
+    constexpr future(std::coroutine_handle<promise_type> handle) noexcept
       : handle(handle)
     {
     }
@@ -116,6 +116,6 @@ class [[nodiscard("future not awaited")]] future
       }
     }
 
-    std::coroutine_handle<detail::promise<T>> handle;
+    std::coroutine_handle<promise_type> handle;
 };
 }  // namespace olifilo
