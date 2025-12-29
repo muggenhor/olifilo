@@ -21,11 +21,28 @@ std::string error_category_t::message(int ev) const
       return "broken promise";
     case future_already_retrieved:
       return "future already retrieved";
+    case coro_bad_alloc:
+      return "couldn't allocate memory for coroutine";
     case no_io_pending:
       return "no pending I/O to wait on";
   }
 
   return "(unrecognized error)";
+}
+
+bool error_category_t::equivalent(int ev, const std::error_condition& condition) const noexcept
+{
+  using enum error;
+
+  switch (static_cast<error>(ev))
+  {
+    case coro_bad_alloc:
+      return condition == std::errc::not_enough_memory;
+    default:
+      return false;
+  }
+
+  return false;
 }
 
 const char* condition_category_t::name() const noexcept

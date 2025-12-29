@@ -44,12 +44,12 @@ class [[nodiscard("future not awaited")]] future
 
     bool done() const
     {
-      return handle && handle.done();
+      return handle.address() == detail::noop_coro_handle.address() || (handle && handle.done());
     }
 
     constexpr bool await_ready() const noexcept
     {
-      return !handle || handle.done();
+      return handle.address() == detail::noop_coro_handle.address() || !handle || handle.done();
     }
 
     void await_suspend(std::coroutine_handle<> suspended)
@@ -63,6 +63,8 @@ class [[nodiscard("future not awaited")]] future
     {
       if (!handle)
         return {unexpect, make_error_code(error::future_already_retrieved)};
+      else if (handle.address() == detail::noop_coro_handle.address())
+        return {unexpect, make_error_code(error::coro_bad_alloc)};
 
       assert(handle.done());
       auto& promise = handle.promise();
@@ -84,6 +86,8 @@ class [[nodiscard("future not awaited")]] future
     {
       if (!handle)
         return {unexpect, make_error_code(error::future_already_retrieved)};
+      else if (handle.address() == detail::noop_coro_handle.address())
+        return {unexpect, make_error_code(error::coro_bad_alloc)};
 
       auto& promise = handle.promise();
       detail::io_poll_context executor;

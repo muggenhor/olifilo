@@ -11,6 +11,7 @@ enum class error
   uninitialized = 1,
   broken_promise,
   future_already_retrieved,
+  coro_bad_alloc,
   no_io_pending,
 };
 
@@ -23,6 +24,7 @@ struct error_category_t : std::error_category
 {
   const char* name() const noexcept override;
   std::string message(int ev) const override;
+  bool equivalent(int ev, const std::error_condition& condition) const noexcept override;
 };
 
 struct condition_category_t : std::error_category

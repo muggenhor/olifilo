@@ -123,11 +123,14 @@ struct suspend_always_to
   }
 };
 
+inline const std::noop_coroutine_handle noop_coro_handle = std::noop_coroutine();
+
 template <typename T>
 class promise final : private detail::promise_wait_callgraph
 {
   public:
     future<T> get_return_object() { return future<T>(std::coroutine_handle<promise>::from_promise(*this)); }
+    static future<T> get_return_object_on_allocation_failure() noexcept { return future<T>(std::coroutine_handle<promise>::from_address(noop_coro_handle.address())); }
     constexpr std::suspend_never initial_suspend() noexcept { return {}; }
     constexpr suspend_always_to final_suspend() noexcept { return {std::exchange(waits_on_me, nullptr)}; }
 
